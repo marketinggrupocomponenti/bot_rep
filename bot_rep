@@ -1,0 +1,166 @@
+import discord
+from discord.ext import commands
+import sqlite3
+from datetime import datetime, timedelta
+import os
+from dotenv import load_dotenv
+
+# Carregar Token do arquivo .env
+load_dotenv()
+TOKEN = os.getenv('DISCORD_TOKEN')
+
+# Configuração de Intenções
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+
+# --- BANCO DE DADOS ---
+def setup_db():
+    conn = sqlite3.connect('reputacao.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY,
+            rep INTEGER DEFAULT 0,
+            ultima_rep TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def alterar_rep(user_id, quantidade):
+    conn = sqlite3.connect('reputacao.db')
+    cursor = conn.cursor()
+    cursor.execute('INSERT OR IGNORE INTO usuarios (id, rep) VALUES (?, 0)', (user_id,))
+    cursor.execute('UPDATE usuarios SET rep = rep + ? WHERE id = ?', (quantidade, user_id))
+    cursor.execute('SELECT rep FROM usuarios WHERE id = ?', (user_id,))
+    nova_pontuacao = cursor.fetchone()[0]
+    conn.commit()
+    conn.close()
+    return nova_pontuacao
+
+# --- EVENTOS ---
+@bot.event
+async def on_ready():
+    setup_db()
+    print(f'✅ {bot.user.name} está online!')
+    await bot.change_presence(activity=discord.Game(name="Digite: !ajuda para comandos"))
+
+# --- COMANDOS PÚBLICOS ---
+
+@bot.command()
+async def ajuda(ctx):
+    """Comando de Ajuda Personalizado"""
+    embed = discord.Embed(
+        title="📖 Guia de Comandos - Sistema de Reputação",
+        description="Use os comandos abaixo para interagir com o sistema de reputação do servidor.",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 ponto de reputação (1 uso por hora).", inline=False)
+    embed.add_field(name="👤 `!perfil @membro`", value="Vê a reputação atual de um raider.", inline=False)
+    embed.add_field(name="🏆 `!top`", value="Mostra o ranking dos 100 raider mais confiáveis.", inline=False)
+    
+    # Se for admin/mods, mostra comandos extras
+    if ctx.author.guild_permissions.manage_messages:
+        embed.add_field(name="🛠️ Moderação", value="`!setrep @membro [valor]` - Define os pontos.\n`!resetar @membro` - Zera os pontos de alguém.", inline=False)
+    
+    embed.set_footer(text="Bot desenvolvido para a comunidade ARC Raiders Brasil")
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.cooldown(1, 3600, commands.BucketType.user)
+async def rep(ctx, membro: discord.Member):
+    if membro == ctx.author:
+        ctx.command.reset_cooldown(ctx)
+        return await ctx.send("❌ Você não pode dar reputação a si mesmo!")
+    
+    nova_pontuacao = alterar_rep(membro.id, 1)
+    await ctx.send(f"🌟 {ctx.author.mention} deu +1 de reputação para {membro.mention}!")
+
+    # Cargo Automático aos 100 pontos
+    if nova_pontuacao >= 100:
+        cargo = discord.utils.get(ctx.guild.roles, name="trocador oficial")
+        if cargo and cargo not in membro.roles:
+            try:
+                await membro.add_roles(cargo)
+                await ctx.send(f"🎉 {membro.mention} atingiu **100 pontos** e agora é um **{cargo.name}**!")
+            except discord.Forbidden:
+                print("Erro: Sem permissão para gerenciar cargos.")
+
+@bot.command()
+async def perfil(ctx, membro: discord.Member = None):
+    membro = membro or ctx.author
+    conn = sqlite3.connect('reputacao.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT rep FROM usuarios WHERE id = ?', (membro.id,))
+    res = cursor.fetchone()
+    pontos = res[0] if res else 0
+    conn.close()
+    
+    embed = discord.Embed(title=f"Perfil de {membro.display_name}", color=discord.Color.green())
+    embed.add_field(name="Reputação Atual", value=f"✨ `{pontos}` pontos")
+    embed.set_thumbnail(url=membro.display_avatar.url)
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def top(ctx):
+    conn = sqlite3.connect('reputacao.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, rep FROM usuarios ORDER BY rep DESC LIMIT 100')
+    leaderboard = cursor.fetchall()
+    conn.close()
+
+    if not leaderboard:
+        return await ctx.send("O ranking ainda está vazio!")
+
+    embed = discord.Embed(title="🏆 Melhores Trocadores (Top 100)", color=discord.Color.gold())
+    
+    descricao = ""
+    for i, (user_id, pontos) in enumerate(leaderboard, 1):
+        user = bot.get_user(user_id)
+        nome = user.name if user else f"ID:{user_id}"
+        descricao += f"`#{i:02d}` **{nome}** — {pontos} reps\n"
+        if i == 20: # Limita a exibição visual no embed para não ficar gigante
+            descricao += "\n*... exibindo apenas os mais bem avaliados.*"
+            break
+            
+    embed.description = descricao
+    await ctx.send(embed=embed)
+
+# --- COMANDOS DE STAFF ---
+
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def setrep(ctx, membro: discord.Member, valor: int):
+    alterar_rep(membro.id, 0)
+    conn = sqlite3.connect('reputacao.db')
+    cursor = conn.cursor()
+    cursor.execute('UPDATE usuarios SET rep = ? WHERE id = ?', (valor, membro.id))
+    conn.commit()
+    conn.close()
+    await ctx.send(f"✅ Reputação de {membro.mention} definida para `{valor}`.")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def resetar(ctx, membro: discord.Member):
+    conn = sqlite3.connect('reputacao.db')
+    cursor = conn.cursor()
+    cursor.execute('UPDATE usuarios SET rep = 0 WHERE id = ?', (membro.id,))
+    conn.commit()
+    conn.close()
+    await ctx.send(f"⚠️ A reputação de {membro.mention} foi resetada para zero.")
+
+# --- TRATAMENTO DE ERROS ---
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        tempo = str(timedelta(seconds=int(error.retry_after)))
+        await ctx.send(f"⏳ Calma! Você pode dar rep novamente em `{tempo}`.")
+    elif isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ Você não tem permissão para usar este comando.")
+    elif isinstance(error, commands.MemberNotFound):
+        await ctx.send("❌ Não consegui encontrar esse raider.")
+
+bot.run(TOKEN)
