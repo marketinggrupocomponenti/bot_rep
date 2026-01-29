@@ -18,8 +18,11 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 # --- BANCO DE DADOS POSTGRESQL ---
 def get_db_connection():
-    # Conecta usando a URL do Railway
-    return psycopg2.connect(DATABASE_URL, sslmode='require')
+    url = os.getenv('DATABASE_URL')
+    # O Railway às vezes entrega postgres://, mas o psycopg2 prefere postgresql://
+    if url and url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    return psycopg2.connect(url, sslmode='require')
 
 def setup_db():
     conn = get_db_connection()
