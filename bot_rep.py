@@ -97,7 +97,7 @@ async def ajuda(ctx):
     if ctx.author.guild_permissions.manage_messages:
         embed.add_field(name="🛠️ Moderação", value="`!setrep @membro [valor]`\n`!resetar @membro`", inline=False)
     
-    embed.set_footer(text="Use com responsabilidade!")
+    embed.set_footer(text="Desenvolvido por fugazzeto para a comunidade ARC Raiders Brasil")
     await ctx.send(embed=embed)
 
 @bot.command()
