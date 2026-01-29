@@ -114,6 +114,4 @@ async def top(ctx):
     embed.description = descricao
     await ctx.send(embed=embed)
 
-# (Mantenha os comandos de Staff e Erros iguais aos seus, apenas trocando o código SQL por %s se necessário)
-
 bot.run(TOKEN)
