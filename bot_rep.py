@@ -87,17 +87,17 @@ async def ajuda(ctx):
     """Guia de comandos do servidor"""
     embed = discord.Embed(
         title="📖 Guia de Comandos - ARC Raiders Brasil",
-        description="Sistema de reputação para trocas e interações.",
+        description="Sistema de reputação para trocas.",
         color=discord.Color.blue()
     )
-    embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 ponto (1 uso por hora).", inline=False)
-    embed.add_field(name="👤 `!perfil @membro`", value="Consulta os pontos de alguém.", inline=False)
-    embed.add_field(name="🏆 `!top`", value="Ranking dos 10 melhores.", inline=False)
+    embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação para alguém. (1 uso por hora).", inline=False)
+    embed.add_field(name="👤 `!perfil @membro`", value="Consulta a reputação de alguém.", inline=False)
+    embed.add_field(name="🏆 `!top`", value="Ranking dos 10 melhores trocadores.", inline=False)
     
     if ctx.author.guild_permissions.manage_messages:
         embed.add_field(name="🛠️ Moderação", value="`!setrep @membro [valor]`\n`!resetar @membro`", inline=False)
     
-    embed.set_footer(text="Desenvolvido por fugazzeto para a comunidade ARC Raiders Brasil")
+    embed.set_footer(text="Desenvolvido por fugazzeto para a comunidade ARC Raiders Brasil.")
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -105,7 +105,7 @@ async def ajuda(ctx):
 async def rep(ctx, membro: discord.Member):
     if membro == ctx.author:
         ctx.command.reset_cooldown(ctx)
-        return await ctx.send("❌ Não podes dar reputação a ti mesmo!")
+        return await ctx.send("❌ Você não pode dar reputação para si mesmo!")
     
     nova_pontuacao = alterar_rep(membro.id, 1)
     await ctx.send(f"🌟 {ctx.author.mention} deu +1 de reputação para {membro.mention}!")
@@ -133,7 +133,7 @@ async def perfil(ctx, membro: discord.Member = None):
     conn.close()
     
     embed = discord.Embed(title=f"Perfil de {membro.display_name}", color=discord.Color.green())
-    embed.add_field(name="Reputação Atual", value=f"✨ `{pontos}` pontos")
+    embed.add_field(name="Reputação Atual", value=f"✨ `{pontos}` pontos de reputação")
     embed.set_thumbnail(url=membro.display_avatar.url)
     await ctx.send(embed=embed)
 
@@ -182,12 +182,12 @@ async def resetar(ctx, membro: discord.Member):
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
         tempo = str(timedelta(seconds=int(error.retry_after)))
-        await ctx.send(f"⏳ Aguarda! Podes usar este comando novamente em `{tempo}`.")
+        await ctx.send(f"⏳ Favor aguardar! Você só poderá usar este comando novamente em `{tempo}`.")
     elif isinstance(error, commands.MissingPermissions):
-        await ctx.send("❌ Não tens permissão para usar este comando.")
+        await ctx.send("❌ Você não tem permissão para usar este comando.")
     elif isinstance(error, commands.CommandNotFound):
         return
     else:
-        print(f"Erro detetado: {error}")
+        print(f"Erro detectado: {error}")
 
 bot.run(TOKEN)
