@@ -1,15 +1,16 @@
 import discord
 from discord.ext import commands
 import os
-import psycopg2 # Biblioteca para PostgreSQL
+import psycopg2
 from dotenv import load_dotenv
 from datetime import timedelta
 
+# Carrega variáveis de ambiente
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-# O Railway fornece essa URL automaticamente quando você adiciona o banco
 DATABASE_URL = os.getenv('DATABASE_URL')
 
+# Configuração de Intenções
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -19,13 +20,11 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 # --- BANCO DE DADOS POSTGRESQL ---
 def get_db_connection():
     url = os.getenv('DATABASE_URL')
-    
-    # Se a variável estiver vazia, o bot não vai saber para onde discar
     if not url:
         print("❌ ERRO: A variável DATABASE_URL não foi encontrada!")
         return None
 
-    # O Railway usa o prefixo antigo 'postgres://', mas o Python novo exige 'postgresql://'
+    # Ajuste de prefixo para compatibilidade com SQLAlchemy/Psycopg2
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
         
@@ -33,8 +32,7 @@ def get_db_connection():
 
 def setup_db():
     conn = get_db_connection()
-    if conn is None:
-        return # Interrompe se não houver banco
+    if conn is None: return
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
@@ -49,8 +47,8 @@ def setup_db():
 
 def alterar_rep(user_id, quantidade):
     conn = get_db_connection()
+    if conn is None: return 0
     cursor = conn.cursor()
-    # Lógica "Insert or Update" para PostgreSQL
     cursor.execute('''
         INSERT INTO usuarios (id, rep) VALUES (%s, %s)
         ON CONFLICT (id) DO UPDATE SET rep = usuarios.rep + EXCLUDED.rep
@@ -67,8 +65,28 @@ def alterar_rep(user_id, quantidade):
 async def on_ready():
     setup_db()
     print(f'✅ {bot.user.name} está online com PostgreSQL!')
+    await bot.change_presence(activity=discord.Game(name="Digite: !ajuda"))
 
-# --- COMANDOS (Reputação) ---
+# --- COMANDOS PÚBLICOS ---
+
+@bot.command()
+async def ajuda(ctx):
+    """Comando de Ajuda"""
+    embed = discord.Embed(
+        title="📖 Guia de Comandos - ARC Raiders Brasil",
+        description="Use os comandos abaixo para gerenciar sua reputação.",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 ponto de reputação (1 uso por hora).", inline=False)
+    embed.add_field(name="👤 `!perfil @membro`", value="Vê a reputação atual.", inline=False)
+    embed.add_field(name="🏆 `!top`", value="Ranking dos 10 melhores.", inline=False)
+    
+    if ctx.author.guild_permissions.manage_messages:
+        embed.add_field(name="🛠️ Moderação", value="`!setrep @membro [valor]`\n`!resetar @membro`", inline=False)
+    
+    embed.set_footer(text="Sistema de Reputação Ativo")
+    await ctx.send(embed=embed)
+
 @bot.command()
 @commands.cooldown(1, 3600, commands.BucketType.user)
 async def rep(ctx, membro: discord.Member):
@@ -84,7 +102,7 @@ async def rep(ctx, membro: discord.Member):
         if cargo and cargo not in membro.roles:
             try:
                 await membro.add_roles(cargo)
-                await ctx.send(f"🎉 {membro.mention} atingiu **100 pontos**!")
+                await ctx.send(f"🎉 {membro.mention} atingiu **100 pontos** e ganhou o cargo **{cargo.name}**!")
             except:
                 pass
 
@@ -92,6 +110,7 @@ async def rep(ctx, membro: discord.Member):
 async def perfil(ctx, membro: discord.Member = None):
     membro = membro or ctx.author
     conn = get_db_connection()
+    if conn is None: return
     cursor = conn.cursor()
     cursor.execute('SELECT rep FROM usuarios WHERE id = %s', (membro.id,))
     res = cursor.fetchone()
@@ -107,6 +126,7 @@ async def perfil(ctx, membro: discord.Member = None):
 @bot.command()
 async def top(ctx):
     conn = get_db_connection()
+    if conn is None: return
     cursor = conn.cursor()
     cursor.execute('SELECT id, rep FROM usuarios ORDER BY rep DESC LIMIT 10')
     leaderboard = cursor.fetchall()
@@ -125,5 +145,16 @@ async def top(ctx):
             
     embed.description = descricao
     await ctx.send(embed=embed)
+
+# --- TRATAMENTO DE ERROS ---
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        tempo = str(timedelta(seconds=int(error.retry_after)))
+        await ctx.send(f"⏳ Calma! Você pode dar rep novamente em `{tempo}`.")
+    elif isinstance(error, commands.CommandNotFound):
+        return
+    else:
+        print(f"Erro: {error}")
 
 bot.run(TOKEN)
