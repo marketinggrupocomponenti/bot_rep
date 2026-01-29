@@ -19,13 +19,22 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 # --- BANCO DE DADOS POSTGRESQL ---
 def get_db_connection():
     url = os.getenv('DATABASE_URL')
-    # O Railway às vezes entrega postgres://, mas o psycopg2 prefere postgresql://
-    if url and url.startswith("postgres://"):
+    
+    # Se a variável estiver vazia, o bot não vai saber para onde discar
+    if not url:
+        print("❌ ERRO: A variável DATABASE_URL não foi encontrada!")
+        return None
+
+    # O Railway usa o prefixo antigo 'postgres://', mas o Python novo exige 'postgresql://'
+    if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
+        
     return psycopg2.connect(url, sslmode='require')
 
 def setup_db():
     conn = get_db_connection()
+    if conn is None:
+        return # Interrompe se não houver banco
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
