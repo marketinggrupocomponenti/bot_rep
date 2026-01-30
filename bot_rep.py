@@ -10,12 +10,15 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 DATABASE_URL = os.getenv('DATABASE_URL')
 
-# Configuração de Intenções (Intents)
+# Configuração de Intenções
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+
+# --- CONFIGURAÇÃO DE ACESSO ---
+CANAIS_PERMITIDOS = ["troca-de-itens", "staff"]
 
 # --- BANCO DE DADOS POSTGRESQL ---
 
@@ -25,7 +28,6 @@ def get_db_connection():
         print("❌ ERRO: A variável DATABASE_URL não foi encontrada!")
         return None
 
-    # Ajuste de prefixo para compatibilidade (Railway usa postgres://)
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
         
@@ -52,14 +54,12 @@ def alterar_rep(user_id, quantidade, definir=False):
     cursor = conn.cursor()
     
     if definir:
-        # Define o valor exato (usado no setrep e resetar)
         cursor.execute('''
             INSERT INTO usuarios (id, rep) VALUES (%s, %s)
             ON CONFLICT (id) DO UPDATE SET rep = EXCLUDED.rep
             RETURNING rep
         ''', (user_id, quantidade))
     else:
-        # Soma ao valor atual (usado no !rep)
         cursor.execute('''
             INSERT INTO usuarios (id, rep) VALUES (%s, %s)
             ON CONFLICT (id) DO UPDATE SET rep = usuarios.rep + EXCLUDED.rep
@@ -72,12 +72,25 @@ def alterar_rep(user_id, quantidade, definir=False):
     conn.close()
     return nova_pontuacao
 
+# --- CHECKS (VERIFICAÇÕES) ---
+
+@bot.check
+async def verificar_canal(ctx):
+    # Permite o comando apenas se o nome do canal estiver na lista
+    if ctx.channel.name in CANAIS_PERMITIDOS:
+        return True
+    
+    # Se quiser que o bot avise que o canal está errado, descomente as linhas abaixo:
+    # await ctx.send(f"❌ {ctx.author.mention}, comandos só podem ser usados em: `#{'` ou ` #'.join(CANAIS_PERMITIDOS)}`", delete_after=5)
+    
+    return False
+
 # --- EVENTOS ---
 
 @bot.event
 async def on_ready():
     setup_db()
-    print(f'✅ {bot.user.name} está online com PostgreSQL!')
+    print(f'✅ {bot.user.name} está online e filtrando canais!')
     await bot.change_presence(activity=discord.Game(name="Digite: !ajuda"))
 
 # --- COMANDOS PÚBLICOS ---
@@ -97,7 +110,7 @@ async def ajuda(ctx):
     if ctx.author.guild_permissions.manage_messages:
         embed.add_field(name="🛠️ Moderação", value="`!setrep @membro [valor]`\n`!resetar @membro`", inline=False)
     
-    embed.set_footer(text="Desenvolvido por fugazzeto para a comunidade ARC Raiders Brasil.")
+    embed.set_footer(text="Desenvolvido para a comunidade ARC Raiders Brasil.")
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -110,7 +123,6 @@ async def rep(ctx, membro: discord.Member):
     nova_pontuacao = alterar_rep(membro.id, 1)
     await ctx.send(f"🌟 {ctx.author.mention} deu +1 de reputação para {membro.mention}!")
 
-    # Atribuição de cargo automático (100 pontos)
     if nova_pontuacao >= 100:
         cargo = discord.utils.get(ctx.guild.roles, name="trocador oficial")
         if cargo and cargo not in membro.roles:
@@ -165,14 +177,12 @@ async def top(ctx):
 @bot.command()
 @commands.has_permissions(manage_messages=True)
 async def setrep(ctx, membro: discord.Member, valor: int):
-    """Define a reputação exata de um membro"""
     alterar_rep(membro.id, valor, definir=True)
     await ctx.send(f"✅ Reputação de {membro.mention} definida para `{valor}` por {ctx.author.mention}.")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def resetar(ctx, membro: discord.Member):
-    """Zera a reputação de um membro"""
     alterar_rep(membro.id, 0, definir=True)
     await ctx.send(f"⚠️ A reputação de {membro.mention} foi resetada para zero por {ctx.author.mention}.")
 
@@ -180,11 +190,17 @@ async def resetar(ctx, membro: discord.Member):
 
 @bot.event
 async def on_command_error(ctx, error):
+    # Ignora erros de canais não permitidos para não poluir o console
+    if isinstance(error, commands.CheckFailure):
+        return
+        
     if isinstance(error, commands.CommandOnCooldown):
         tempo = str(timedelta(seconds=int(error.retry_after)))
         await ctx.send(f"⏳ Favor aguardar! Você só poderá usar este comando novamente em `{tempo}`.")
     elif isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ Você não tem permissão para usar este comando.")
+    elif isinstance(error, commands.MemberNotFound):
+        await ctx.send("❌ Membro não encontrado. Marque alguém válido.")
     elif isinstance(error, commands.CommandNotFound):
         return
     else:
