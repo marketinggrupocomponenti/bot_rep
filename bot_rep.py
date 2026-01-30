@@ -74,14 +74,20 @@ def alterar_rep(user_id, quantidade, definir=False):
 
 # --- CHECKS (VERIFICAÇÕES) ---
 
+# Lista de nomes dos canais permitidos
+CANAIS_PERMITIDOS = ["troca-de-itens", "staff"]
+
 @bot.check
 async def verificar_canal(ctx):
-    # Permite o comando apenas se o nome do canal estiver na lista
+    # Se o comando for usado em um canal da lista, permite a execução
     if ctx.channel.name in CANAIS_PERMITIDOS:
         return True
     
-    # Se quiser que o bot avise que o canal está errado, descomente as linhas abaixo:
-    # await ctx.send(f"❌ {ctx.author.mention}, comandos só podem ser usados em: `#{'` ou ` #'.join(CANAIS_PERMITIDOS)}`", delete_after=5)
+    # Opcional: Avisar o usuário que ele está no canal errado
+    # (Remova as linhas abaixo se preferir que o bot apenas ignore em silêncio)
+    if not ctx.author.bot:
+        await ctx.send(f"❌ {ctx.author.mention}, comandos só são permitidos nos canais: " + 
+                       ", ".join([f"`#{c}`" for c in CANAIS_PERMITIDOS]), delete_after=5)
     
     return False
 
@@ -90,7 +96,7 @@ async def verificar_canal(ctx):
 @bot.event
 async def on_ready():
     setup_db()
-    print(f'✅ {bot.user.name} está online e filtrando canais!')
+    print(f'✅ {bot.user.name} está online!')
     await bot.change_presence(activity=discord.Game(name="Digite: !ajuda"))
 
 # --- COMANDOS PÚBLICOS ---
@@ -200,7 +206,7 @@ async def on_command_error(ctx, error):
     elif isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ Você não tem permissão para usar este comando.")
     elif isinstance(error, commands.MemberNotFound):
-        await ctx.send("❌ Membro não encontrado. Marque alguém válido.")
+        await ctx.send("❌ Raider não encontrado. Marque alguém válido.")
     elif isinstance(error, commands.CommandNotFound):
         return
     else:
