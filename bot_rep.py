@@ -89,8 +89,14 @@ async def verificar_canal(ctx):
 
 @bot.event
 async def on_ready():
-    setup_db()
-    print(f'✅ {bot.user.name} está online e filtrando canais!')
+    try:
+        setup_db()
+        print(f'✅ Banco de Dados configurado!')
+    except Exception as e:
+        print(f'❌ Erro ao configurar banco: {e}')
+        
+    print(f'✅ {bot.user.name} está online e pronto para receber comandos!')
+    print(f'Canais permitidos: {CANAIS_PERMITIDOS}')
     await bot.change_presence(activity=discord.Game(name="Digite: !ajuda"))
 
 # --- COMANDOS PÚBLICOS ---
