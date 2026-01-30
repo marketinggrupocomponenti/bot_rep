@@ -9,7 +9,6 @@ from datetime import timedelta
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 DATABASE_URL = os.getenv('DATABASE_URL')
-# ID do canal de log definido diretamente
 LOG_CHANNEL_ID = 1433136439456956576 
 
 # Configuração de Intenções
@@ -61,12 +60,33 @@ def alterar_rep(user_id, quantidade, definir=False):
     conn.close()
     return nova_pontuacao
 
+# --- FUNÇÃO AUXILIAR DE CARGOS ---
+
+async def verificar_cargos_nivel(ctx, membro, pontos):
+    """Verifica e atribui cargos baseados na pontuação"""
+    niveis = [
+        {"limite": 100, "nome": "trocador oficial"},
+        {"limite": 50, "nome": "trocador confiavel"},
+        {"limite": 10, "nome": "trocador iniciante"}
+    ]
+    
+    for nivel in niveis:
+        if pontos >= nivel["limite"]:
+            cargo = discord.utils.get(ctx.guild.roles, name=nivel["nome"])
+            if cargo and cargo not in membro.roles:
+                try:
+                    await membro.add_roles(cargo)
+                    await ctx.send(f"🎉 {membro.mention} subiu de nível e agora é um **{cargo.name}**!")
+                except Exception as e:
+                    print(f"Erro ao adicionar cargo {nivel['nome']}: {e}")
+            break # Adiciona apenas o cargo do nível mais alto atingido
+
 # --- EVENTOS ---
 
 @bot.event
 async def on_ready():
     setup_db()
-    print(f'✅ {bot.user.name} online e enviando logs para o canal {LOG_CHANNEL_ID}!')
+    print(f'✅ {bot.user.name} online | Sistema de Medalhas Ativado!')
     await bot.change_presence(activity=discord.Game(name="Digite: !ajuda"))
 
 # --- COMANDOS PÚBLICOS ---
@@ -77,6 +97,7 @@ async def ajuda(ctx):
     embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação (1 uso por hora).", inline=False)
     embed.add_field(name="👤 `!perfil @membro`", value="Consulta a reputação de alguém.", inline=False)
     embed.add_field(name="🏆 `!top`", value="Ranking dos 10 melhores.", inline=False)
+    embed.add_field(name="🎖️ Níveis", value="🥉 10: Iniciante | 🥈 50: Confiável | 🥇 100: Oficial", inline=False)
     if ctx.author.guild_permissions.manage_messages:
         embed.add_field(name="🛠️ Staff", value="`!setrep` e `!resetar`", inline=False)
     await ctx.send(embed=embed)
@@ -95,7 +116,7 @@ async def rep(ctx, membro: discord.Member):
     nova_pontuacao = alterar_rep(membro.id, 1)
     await ctx.send(f"🌟 {ctx.author.mention} deu +1 de reputação para {membro.mention}!")
 
-    # --- SISTEMA DE LOGS ---
+    # Sistema de Logs
     try:
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
@@ -103,20 +124,12 @@ async def rep(ctx, membro: discord.Member):
             log_embed.add_field(name="Doador", value=f"{ctx.author.mention}\n`{ctx.author.name}`", inline=True)
             log_embed.add_field(name="Recebeu", value=f"{membro.mention}\n`{membro.name}`", inline=True)
             log_embed.add_field(name="Nova Pontuação", value=f"✨ `{nova_pontuacao}` pontos", inline=False)
-            log_embed.set_footer(text=f"Enviado do canal: #{ctx.channel.name}")
             log_embed.timestamp = ctx.message.created_at
             await log_channel.send(embed=log_embed)
-    except Exception as e:
-        print(f"Erro ao enviar log: {e}")
+    except: pass
 
-    # Cargo Automático
-    if nova_pontuacao >= 100:
-        cargo = discord.utils.get(ctx.guild.roles, name="trocador oficial")
-        if cargo and cargo not in membro.roles:
-            try:
-                await membro.add_roles(cargo)
-                await ctx.send(f"🎉 {membro.mention} atingiu **100 pontos** e agora é um **{cargo.name}**!")
-            except: pass
+    # Verifica se ganhou medalha/cargo novo
+    await verificar_cargos_nivel(ctx, membro, nova_pontuacao)
 
 @bot.command()
 async def perfil(ctx, membro: discord.Member = None):
@@ -129,8 +142,15 @@ async def perfil(ctx, membro: discord.Member = None):
     pontos = res[0] if res else 0
     cursor.close()
     conn.close()
+    
+    # Define a medalha para o perfil
+    medalha = "🥚"
+    if pontos >= 100: medalha = "🥇"
+    elif pontos >= 50: medalha = "🥈"
+    elif pontos >= 10: medalha = "🥉"
+
     embed = discord.Embed(title=f"Perfil de {membro.display_name}", color=discord.Color.green())
-    embed.add_field(name="Reputação Atual", value=f"✨ `{pontos}` pontos")
+    embed.add_field(name="Reputação Atual", value=f"{medalha} `{pontos}` pontos")
     embed.set_thumbnail(url=membro.display_avatar.url)
     await ctx.send(embed=embed)
 
@@ -149,7 +169,8 @@ async def top(ctx):
     for i, (user_id, pontos) in enumerate(leaderboard, 1):
         user = bot.get_user(user_id)
         nome = user.name if user else f"ID:{user_id}"
-        desc += f"`#{i:02d}` **{nome}** — {pontos} reps\n"
+        medalha = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "✨"
+        desc += f"`#{i:02d}` {medalha} **{nome}** — {pontos} reps\n"
     embed.description = desc
     await ctx.send(embed=embed)
 
@@ -158,16 +179,15 @@ async def top(ctx):
 @bot.command()
 @commands.has_permissions(manage_messages=True)
 async def setrep(ctx, membro: discord.Member, valor: int):
-    alterar_rep(membro.id, valor, definir=True)
-    await ctx.send(f"✅ Rep de {membro.mention} definida para `{valor}`.")
+    nova_pontuacao = alterar_rep(membro.id, valor, definir=True)
+    await ctx.send(f"✅ Reputação de {membro.mention} definida para `{valor}`.")
+    await verificar_cargos_nivel(ctx, membro, nova_pontuacao)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def resetar(ctx, membro: discord.Member):
     alterar_rep(membro.id, 0, definir=True)
-    await ctx.send(f"⚠️ Rep de {membro.mention} resetada.")
-
-# --- TRATAMENTO DE ERROS ---
+    await ctx.send(f"⚠️ A reputação de {membro.mention} foi resetada.")
 
 @bot.event
 async def on_command_error(ctx, error):
