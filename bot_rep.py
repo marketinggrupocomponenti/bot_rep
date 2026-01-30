@@ -5,7 +5,7 @@ import psycopg2
 from dotenv import load_dotenv
 from datetime import timedelta
 
-# Carrega variáveis de ambiente
+# --- CARREGAMENTO DE CONFIGURAÇÕES ---
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -16,9 +16,6 @@ intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
-
-# --- CONFIGURAÇÃO DE ACESSO ---
-CANAIS_PERMITIDOS = ["troca-de-itens", "staff"]
 
 # --- BANCO DE DADOS POSTGRESQL ---
 
@@ -31,7 +28,11 @@ def get_db_connection():
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
         
-    return psycopg2.connect(url, sslmode='require')
+    try:
+        return psycopg2.connect(url, sslmode='require')
+    except Exception as e:
+        print(f"❌ ERRO ao conectar ao banco: {e}")
+        return None
 
 def setup_db():
     conn = get_db_connection()
@@ -72,32 +73,37 @@ def alterar_rep(user_id, quantidade, definir=False):
     conn.close()
     return nova_pontuacao
 
-# --- CHECKS (VERIFICAÇÕES) ---
-
-@bot.check
-async def verificar_canal(ctx):
-    # Permite o comando apenas se o nome do canal estiver na lista
-    if ctx.channel.name in CANAIS_PERMITIDOS:
-        return True
-    
-    # Se quiser que o bot avise que o canal está errado, descomente as linhas abaixo:
-    # await ctx.send(f"❌ {ctx.author.mention}, comandos só podem ser usados em: `#{'` ou ` #'.join(CANAIS_PERMITIDOS)}`", delete_after=5)
-    
-    return False
-
 # --- EVENTOS ---
 
 @bot.event
 async def on_ready():
     try:
         setup_db()
-        print(f'✅ Banco de Dados configurado!')
+        print(f'✅ Banco de Dados sincronizado!')
     except Exception as e:
-        print(f'❌ Erro ao configurar banco: {e}')
+        print(f'⚠️ Erro no Banco: {e}')
         
-    print(f'✅ {bot.user.name} está online e pronto para receber comandos!')
-    print(f'Canais permitidos: {CANAIS_PERMITIDOS}')
+    print(f'✅ {bot.user.name} está ONLINE!')
     await bot.change_presence(activity=discord.Game(name="Digite: !ajuda"))
+
+# --- TRATAMENTO DE ERROS ---
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        tempo = str(timedelta(seconds=int(error.retry_after)))
+        return await ctx.send(f"⏳ Aguarde `{tempo}` para usar este comando novamente.", delete_after=5)
+    
+    if isinstance(error, commands.MissingPermissions):
+        return await ctx.send("❌ Você não tem permissão para usar este comando.", delete_after=5)
+
+    if isinstance(error, commands.MemberNotFound):
+        return await ctx.send("❌ Membro não encontrado.", delete_after=5)
+
+    if isinstance(error, commands.CommandNotFound):
+        return
+
+    print(f"DEBUG ERRO: {error}")
 
 # --- COMANDOS PÚBLICOS ---
 
@@ -109,14 +115,14 @@ async def ajuda(ctx):
         description="Sistema de reputação para trocas.",
         color=discord.Color.blue()
     )
-    embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação para alguém. (1 uso por hora).", inline=False)
+    embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação (1 uso por hora).", inline=False)
     embed.add_field(name="👤 `!perfil @membro`", value="Consulta a reputação de alguém.", inline=False)
     embed.add_field(name="🏆 `!top`", value="Ranking dos 10 melhores trocadores.", inline=False)
     
     if ctx.author.guild_permissions.manage_messages:
         embed.add_field(name="🛠️ Moderação", value="`!setrep @membro [valor]`\n`!resetar @membro`", inline=False)
     
-    embed.set_footer(text="Desenvolvido para a comunidade ARC Raiders Brasil.")
+    embed.set_footer(text="Comunidade ARC Raiders Brasil.")
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -126,6 +132,10 @@ async def rep(ctx, membro: discord.Member):
         ctx.command.reset_cooldown(ctx)
         return await ctx.send("❌ Você não pode dar reputação para si mesmo!")
     
+    if membro.bot:
+        ctx.command.reset_cooldown(ctx)
+        return await ctx.send("❌ Bots não utilizam sistema de reputação.")
+
     nova_pontuacao = alterar_rep(membro.id, 1)
     await ctx.send(f"🌟 {ctx.author.mention} deu +1 de reputação para {membro.mention}!")
 
@@ -134,9 +144,9 @@ async def rep(ctx, membro: discord.Member):
         if cargo and cargo not in membro.roles:
             try:
                 await membro.add_roles(cargo)
-                await ctx.send(f"🎉 {membro.mention} atingiu **100 pontos** e é agora um **{cargo.name}**!")
+                await ctx.send(f"🎉 {membro.mention} agora é um **{cargo.name}**!")
             except:
-                print("Erro ao adicionar cargo: Verifique as permissões do bot.")
+                print("Erro ao adicionar cargo: Verifique a hierarquia do bot.")
 
 @bot.command()
 async def perfil(ctx, membro: discord.Member = None):
@@ -151,7 +161,7 @@ async def perfil(ctx, membro: discord.Member = None):
     conn.close()
     
     embed = discord.Embed(title=f"Perfil de {membro.display_name}", color=discord.Color.green())
-    embed.add_field(name="Reputação Atual", value=f"✨ `{pontos}` pontos de reputação")
+    embed.add_field(name="Reputação Atual", value=f"✨ `{pontos}` pontos")
     embed.set_thumbnail(url=membro.display_avatar.url)
     await ctx.send(embed=embed)
 
@@ -184,32 +194,13 @@ async def top(ctx):
 @commands.has_permissions(manage_messages=True)
 async def setrep(ctx, membro: discord.Member, valor: int):
     alterar_rep(membro.id, valor, definir=True)
-    await ctx.send(f"✅ Reputação de {membro.mention} definida para `{valor}` por {ctx.author.mention}.")
+    await ctx.send(f"✅ Reputação de {membro.mention} definida para `{valor}`.")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def resetar(ctx, membro: discord.Member):
     alterar_rep(membro.id, 0, definir=True)
-    await ctx.send(f"⚠️ A reputação de {membro.mention} foi resetada para zero por {ctx.author.mention}.")
+    await ctx.send(f"⚠️ A reputação de {membro.mention} foi resetada.")
 
-# --- TRATAMENTO DE ERROS ---
-
-@bot.event
-async def on_command_error(ctx, error):
-    # Ignora erros de canais não permitidos para não poluir o console
-    if isinstance(error, commands.CheckFailure):
-        return
-        
-    if isinstance(error, commands.CommandOnCooldown):
-        tempo = str(timedelta(seconds=int(error.retry_after)))
-        await ctx.send(f"⏳ Favor aguardar! Você só poderá usar este comando novamente em `{tempo}`.")
-    elif isinstance(error, commands.MissingPermissions):
-        await ctx.send("❌ Você não tem permissão para usar este comando.")
-    elif isinstance(error, commands.MemberNotFound):
-        await ctx.send("❌ Membro não encontrado. Marque alguém válido.")
-    elif isinstance(error, commands.CommandNotFound):
-        return
-    else:
-        print(f"Erro detectado: {error}")
-
+# --- INICIALIZAÇÃO ---
 bot.run(TOKEN)
