@@ -4,14 +4,32 @@ import os
 import psycopg2
 from dotenv import load_dotenv
 from datetime import timedelta
+import sys
 
 # --- CARREGAMENTO DE CONFIGURAÇÕES ---
-load_dotenv()
+def carregar_config():
+    load_dotenv(override=True)
+    diretorio_script = os.path.dirname(os.path.abspath(__file__))
+    caminho_env = os.path.join(diretorio_script, '.env')
+    
+    if os.path.exists(caminho_env):
+        with open(caminho_env, "r", encoding="utf-8", errors="ignore") as f:
+            for linha in f:
+                linha = linha.strip()
+                if linha and "=" in linha and not linha.startswith("#"):
+                    chave, valor = linha.split("=", 1)
+                    os.environ[chave.strip()] = valor.strip().replace('"', '').replace("'", "")
+
+carregar_config()
+
 TOKEN = os.getenv('DISCORD_TOKEN')
 DATABASE_URL = os.getenv('DATABASE_URL')
-LOG_CHANNEL_ID = 1433136439456956576 
+LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', 1433136439456956576))
 
-# Configuração de Intenções
+if not TOKEN:
+    print("❌ ERRO: DISCORD_TOKEN não encontrado!")
+    sys.exit()
+
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -26,10 +44,13 @@ def get_db_connection():
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
     try:
-        return psycopg2.connect(url, sslmode='require')
-    except Exception as e:
-        print(f"❌ Erro banco: {e}")
-        return None
+        return psycopg2.connect(url, sslmode='require', connect_timeout=5)
+    except:
+        try:
+            return psycopg2.connect(url, sslmode='disable', connect_timeout=5)
+        except Exception as e:
+            print(f"❌ Erro banco: {e}")
+            return None
 
 def setup_db():
     conn = get_db_connection()
@@ -60,76 +81,109 @@ def alterar_rep(user_id, quantidade, definir=False):
     conn.close()
     return nova_pontuacao
 
-# --- FUNÇÃO AUXILIAR DE CARGOS ---
+# --- FUNÇÕES DE VERIFICAÇÃO ---
+
+def eh_staff():
+    async def predicate(ctx):
+        is_mod = any(role.name.lower() == "mods" for role in ctx.author.roles)
+        is_admin = ctx.author.guild_permissions.administrator
+        if is_mod or is_admin:
+            return True
+        await ctx.send("❌ Você não tem permissão (**mods** ou **admin**) para usar este comando.")
+        return False
+    return commands.check(predicate)
 
 async def verificar_cargos_nivel(ctx, membro, pontos):
-    """Verifica e atribui cargos baseados na pontuação"""
     niveis = [
         {"limite": 100, "nome": "trocador oficial"},
         {"limite": 50, "nome": "trocador confiavel"},
         {"limite": 10, "nome": "trocador iniciante"}
     ]
     
+    cargo_perigoso_nome = "trocador perigoso"
+    cargo_perigoso = discord.utils.get(ctx.guild.roles, name=cargo_perigoso_nome)
+
+    if pontos <= -10:
+        if cargo_perigoso and cargo_perigoso not in membro.roles:
+            try:
+                await membro.add_roles(cargo_perigoso)
+                await ctx.send(f"⚠️ **ATENÇÃO:** {membro.mention} atingiu reputação crítica e recebeu o cargo **{cargo_perigoso_nome}**! 💀")
+            except: pass
+    else:
+        if cargo_perigoso and cargo_perigoso in membro.roles:
+            try:
+                await membro.remove_roles(cargo_perigoso)
+                await ctx.send(f"✅ {membro.mention} não possui mais reputação crítica. Cargo **{cargo_perigoso_nome}** removido.")
+            except: pass
+
     for nivel in niveis:
-        if pontos >= nivel["limite"]:
-            cargo = discord.utils.get(ctx.guild.roles, name=nivel["nome"])
-            if cargo and cargo not in membro.roles:
+        cargo = discord.utils.get(ctx.guild.roles, name=nivel["nome"])
+        if cargo:
+            if pontos < nivel["limite"] and cargo in membro.roles:
+                try: await membro.remove_roles(cargo)
+                except: pass
+            elif pontos >= nivel["limite"] and cargo not in membro.roles:
                 try:
                     await membro.add_roles(cargo)
-                    await ctx.send(f"🎉 {membro.mention} subiu de nível e agora é um **{cargo.name}**!")
-                except Exception as e:
-                    print(f"Erro ao adicionar cargo {nivel['nome']}: {e}")
-            break # Adiciona apenas o cargo do nível mais alto atingido
+                    await ctx.send(f"🎉 **{membro.display_name}** subiu para **{cargo.name}**!")
+                except: pass
+                break
 
 # --- EVENTOS ---
 
 @bot.event
 async def on_ready():
     setup_db()
-    print(f'✅ {bot.user.name} online | Sistema de Medalhas Ativado!')
+    print(f'✅ {bot.user.name} está ONLINE!')
     await bot.change_presence(activity=discord.Game(name="Digite: !ajuda"))
 
-# --- COMANDOS PÚBLICOS ---
+    # VERIFICAÇÃO DE RESTART: Avisa no canal se o bot foi reiniciado por comando
+    if len(sys.argv) > 1:
+        try:
+            channel_id = int(sys.argv[-1])
+            channel = bot.get_channel(channel_id)
+            if channel:
+                await channel.send("✅ **Bot online!** O processo de reinicialização foi concluído.")
+            
+            # Remove o argumento para evitar loops de mensagem em crash
+            sys.argv.pop()
+        except Exception:
+            pass
+
+# --- COMANDOS ---
 
 @bot.command()
 async def ajuda(ctx):
-    embed = discord.Embed(title="📖 Guia de Comandos - ARC Raiders Brasil", color=discord.Color.blue())
-    embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação (1 uso por hora).", inline=False)
-    embed.add_field(name="👤 `!perfil @membro`", value="Consulta a reputação de alguém.", inline=False)
-    embed.add_field(name="🏆 `!top`", value="Ranking dos 10 melhores.", inline=False)
-    embed.add_field(name="🎖️ Níveis", value="🥉 10: Iniciante | 🥈 50: Confiável | 🥇 100: Oficial", inline=False)
-    if ctx.author.guild_permissions.manage_messages:
-        embed.add_field(name="🛠️ Staff", value="`!setrep` e `!resetar`", inline=False)
+    embed = discord.Embed(title="📖 Bot de Reputação - ARC Raiders Brasil", color=discord.Color.blue())
+    embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação (1 uso/hora).", inline=False)
+    embed.add_field(name="💢 `!neg @membro`", value="Dá -1 de reputação (1 uso/hora).", inline=False)
+    embed.add_field(name="👤 `!perfil @membro`", value="Ver reputação e medalha de alguém.", inline=False)
+    embed.add_field(name="🏆 `!top`", value="Ranking dos 10 melhores trocadores.", inline=False)
+    
+    # Verifica se é staff para mostrar comandos extras
+    is_staff = any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator
+    if is_staff:
+        embed.add_field(name="🛠️ Staff", value="`!setrep`, `!resetar`, `!restart`", inline=False)
+    
+    embed.set_footer(text="Desenvolvido por fugazzeto para ARC Raiders Brasil.")
     await ctx.send(embed=embed)
 
 @bot.command()
 @commands.cooldown(1, 3600, commands.BucketType.user)
 async def rep(ctx, membro: discord.Member):
-    if membro == ctx.author:
+    if membro == ctx.author or membro.bot:
         ctx.command.reset_cooldown(ctx)
-        return await ctx.send("❌ Você não pode dar reputação para si mesmo!")
-    
-    if membro.bot:
-        ctx.command.reset_cooldown(ctx)
-        return await ctx.send("❌ Bots não utilizam reputação.")
+        return await ctx.send("❌ Alvo inválido.")
+    nova = alterar_rep(membro.id, 1)
+    await ctx.send(f"🌟 {ctx.author.mention} deu **+1** de rep para {membro.mention}!")
+    await verificar_cargos_nivel(ctx, membro, nova)
 
-    nova_pontuacao = alterar_rep(membro.id, 1)
-    await ctx.send(f"🌟 {ctx.author.mention} deu +1 de reputação para {membro.mention}!")
-
-    # Sistema de Logs
-    try:
-        log_channel = bot.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            log_embed = discord.Embed(title="📈 Registro de Reputação", color=discord.Color.dark_green())
-            log_embed.add_field(name="Doador", value=f"{ctx.author.mention}\n`{ctx.author.name}`", inline=True)
-            log_embed.add_field(name="Recebeu", value=f"{membro.mention}\n`{membro.name}`", inline=True)
-            log_embed.add_field(name="Nova Pontuação", value=f"✨ `{nova_pontuacao}` pontos", inline=False)
-            log_embed.timestamp = ctx.message.created_at
-            await log_channel.send(embed=log_embed)
-    except: pass
-
-    # Verifica se ganhou medalha/cargo novo
-    await verificar_cargos_nivel(ctx, membro, nova_pontuacao)
+@bot.command()
+@eh_staff()
+async def neg(ctx, membro: discord.Member):
+    nova = alterar_rep(membro.id, -1)
+    await ctx.send(f"💢 {ctx.author.mention} deu **-1** de rep para {membro.mention}!")
+    await verificar_cargos_nivel(ctx, membro, nova)
 
 @bot.command()
 async def perfil(ctx, membro: discord.Member = None):
@@ -143,16 +197,13 @@ async def perfil(ctx, membro: discord.Member = None):
     cursor.close()
     conn.close()
     
-    # Define a medalha para o perfil
-    medalha = "🥚"
-    if pontos >= 100: medalha = "🥇"
-    elif pontos >= 50: medalha = "🥈"
-    elif pontos >= 10: medalha = "🥉"
-
-    embed = discord.Embed(title=f"Perfil de {membro.display_name}", color=discord.Color.green())
-    embed.add_field(name="Reputação Atual", value=f"{medalha} `{pontos}` pontos")
-    embed.set_thumbnail(url=membro.display_avatar.url)
-    await ctx.send(embed=embed)
+    med = "👍"
+    if pontos >= 100: med = "🥇"
+    elif pontos >= 50: med = "🥈"
+    elif pontos >= 10: med = "🥉"
+    elif pontos <= -10: med = "💀"
+    elif pontos < 0: med = "⚠️"
+    await ctx.send(f"👤 {membro.mention} | Status: {med} **{pontos}** pontos.")
 
 @bot.command()
 async def top(ctx):
@@ -160,41 +211,42 @@ async def top(ctx):
     if not conn: return
     cursor = conn.cursor()
     cursor.execute('SELECT id, rep FROM usuarios ORDER BY rep DESC LIMIT 10')
-    leaderboard = cursor.fetchall()
+    lb = cursor.fetchall()
     cursor.close()
     conn.close()
-    if not leaderboard: return await ctx.send("Ranking vazio!")
-    embed = discord.Embed(title="🏆 Melhores Trocadores", color=discord.Color.gold())
-    desc = ""
-    for i, (user_id, pontos) in enumerate(leaderboard, 1):
-        user = bot.get_user(user_id)
-        nome = user.name if user else f"ID:{user_id}"
-        medalha = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "✨"
-        desc += f"`#{i:02d}` {medalha} **{nome}** — {pontos} reps\n"
-    embed.description = desc
-    await ctx.send(embed=embed)
+    msg = "🏆 **RANKING DE REPUTAÇÃO**\n" + "\n".join([f"`{i}.` <@{uid}> - **{r}**" for i, (uid, r) in enumerate(lb, 1)])
+    await ctx.send(msg)
 
-# --- COMANDOS DE STAFF ---
+# --- COMANDOS DE STAFF (CONTROLE) ---
 
 @bot.command()
-@commands.has_permissions(manage_messages=True)
+@eh_staff()
 async def setrep(ctx, membro: discord.Member, valor: int):
-    nova_pontuacao = alterar_rep(membro.id, valor, definir=True)
+    nova = alterar_rep(membro.id, valor, definir=True)
     await ctx.send(f"✅ Reputação de {membro.mention} definida para `{valor}`.")
-    await verificar_cargos_nivel(ctx, membro, nova_pontuacao)
+    await verificar_cargos_nivel(ctx, membro, nova)
 
 @bot.command()
-@commands.has_permissions(administrator=True)
+@eh_staff()
 async def resetar(ctx, membro: discord.Member):
     alterar_rep(membro.id, 0, definir=True)
-    await ctx.send(f"⚠️ A reputação de {membro.mention} foi resetada.")
+    await ctx.send(f"⚠️ Reputação de {membro.mention} resetada.")
+
+@bot.command()
+@eh_staff()
+async def restart(ctx):
+    """Reinicia o bot e passa o ID do canal atual como argumento"""
+    await ctx.send("🔄 O bot está sendo reiniciado e estará online em poucos segundos.")
+    # Inicia um novo processo do python com o canal atual como argumento extra
+    os.execv(sys.executable, [sys.executable, __file__, str(ctx.channel.id)])
+
+# --- TRATAMENTO DE ERROS ---
 
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
-        tempo = str(timedelta(seconds=int(error.retry_after)))
-        return await ctx.send(f"⏳ Aguarde `{tempo}`.", delete_after=5)
-    if isinstance(error, commands.CommandNotFound): return
-    print(f"Erro: {error}")
+        await ctx.send(f"⏳ Aguarde {int(error.retry_after)}s.")
+    elif isinstance(error, commands.CheckFailure):
+        pass
 
 bot.run(TOKEN)
