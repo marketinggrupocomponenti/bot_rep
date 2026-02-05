@@ -163,7 +163,7 @@ async def ajuda(ctx):
     # Verifica se é staff para mostrar comandos extras
     is_staff = any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator
     if is_staff:
-        embed.add_field(name="🛠️ Staff", value="`!setrep`, `!resetar`, `!restart`", inline=False)
+        embed.add_field(name="🛠️ Staff", value="`!setrep`, `!resetar`, `!restart`, `!say`", inline=False)
     
     embed.set_footer(text="Desenvolvido por fugazzeto para ARC Raiders Brasil.")
     await ctx.send(embed=embed)
@@ -239,6 +239,20 @@ async def restart(ctx):
     await ctx.send("🔄 O bot está sendo reiniciado e estará online em poucos segundos.")
     # Inicia um novo processo do python com o canal atual como argumento extra
     os.execv(sys.executable, [sys.executable, __file__, str(ctx.channel.id)])
+
+@bot.command()
+@eh_staff()
+async def say(ctx, *, mensagem: str):
+    """Faz o bot repetir uma mensagem (Apenas Mods e Admin)"""
+    try:
+        # Tenta deletar a mensagem do usuário para o comando ficar 'invisível'
+        await ctx.message.delete()
+    except:
+        # Caso o bot não tenha permissão de gerenciar mensagens, ele ignora o erro
+        pass
+    
+    # Envia a mensagem digitada
+    await ctx.send(mensagem)
 
 # --- TRATAMENTO DE ERROS ---
 
