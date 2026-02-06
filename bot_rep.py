@@ -198,9 +198,10 @@ async def ajuda(ctx):
     is_staff = any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator
     if is_staff:
         embed.add_field(name="🛠️ Staff", value="`!neg`, `!setrep`, `!resetar`, `!restart`", inline=False)
-    
-    await ctx.send(embed=embed)
 
+    embed.set_footer(text="Desenvolvido por fugazzeto para ARC Raiders Brasil.")
+    await ctx.send(embed=embed)
+    
 @bot.command()
 @commands.cooldown(1, 3600, commands.BucketType.user)
 async def rep(ctx, membro: discord.Member):
