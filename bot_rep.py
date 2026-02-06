@@ -27,29 +27,27 @@ import discord
 from discord.ext import commands
 import psycopg2
 from dotenv import load_dotenv
-from datetime import timedelta
 import requests
 from bs4 import BeautifulSoup
 
 # --- CARREGAMENTO DE CONFIGURAÇÕES ---
 def carregar_config():
     load_dotenv(override=True)
-    diretorio_script = os.path.dirname(os.path.abspath(__file__))
-    caminho_env = os.path.join(diretorio_script, '.env')
-    
-    if os.path.exists(caminho_env):
-        with open(caminho_env, "r", encoding="utf-8", errors="ignore") as f:
-            for linha in f:
-                linha = linha.strip()
-                if linha and "=" in linha and not linha.startswith("#"):
-                    chave, valor = linha.split("=", 1)
-                    os.environ[chave.strip()] = valor.strip().replace('"', '').replace("'", "")
+    # Garante que variáveis nulas não quebrem o bot
+    if not os.getenv('DISCORD_TOKEN'):
+        diretorio_script = os.path.dirname(os.path.abspath(__file__))
+        caminho_env = os.path.join(diretorio_script, '.env')
+        if os.path.exists(caminho_env):
+            with open(caminho_env, "r", encoding="utf-8") as f:
+                for linha in f:
+                    if "=" in linha and not linha.startswith("#"):
+                        k, v = linha.split("=", 1)
+                        os.environ[k.strip()] = v.strip().replace('"', '').replace("'", "")
 
 carregar_config()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 DATABASE_URL = os.getenv('DATABASE_URL')
-LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', 1433136439456956576))
 
 if not TOKEN:
     print("❌ ERRO: DISCORD_TOKEN não encontrado!")
@@ -61,7 +59,7 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-# --- BANCO DE DADOS ---
+# --- BANCO DE DADOS (COM RECONEXÃO) ---
 
 def get_db_connection():
     url = os.getenv('DATABASE_URL')
@@ -69,42 +67,47 @@ def get_db_connection():
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
     try:
-        return psycopg2.connect(url, sslmode='require', connect_timeout=5)
-    except:
-        try:
-            return psycopg2.connect(url, sslmode='disable', connect_timeout=5)
-        except Exception as e:
-            print(f"❌ Erro banco: {e}")
-            return None
+        return psycopg2.connect(url, sslmode='require', connect_timeout=10)
+    except Exception as e:
+        print(f"⚠️ Erro ao conectar no Banco: {e}")
+        return None
 
 def setup_db():
     conn = get_db_connection()
     if conn is None: return
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS usuarios (
-            id BIGINT PRIMARY KEY,
-            rep INTEGER DEFAULT 0,
-            ultima_rep TEXT
-        )
-    ''')
-    conn.commit()
-    cursor.close()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id BIGINT PRIMARY KEY,
+                rep INTEGER DEFAULT 0,
+                ultima_rep TEXT
+            )
+        ''')
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"❌ Erro no Setup do Banco: {e}")
 
 def alterar_rep(user_id, quantidade, definir=False):
     conn = get_db_connection()
     if conn is None: return 0
-    cursor = conn.cursor()
-    if definir:
-        cursor.execute('INSERT INTO usuarios (id, rep) VALUES (%s, %s) ON CONFLICT (id) DO UPDATE SET rep = EXCLUDED.rep RETURNING rep', (user_id, quantidade))
-    else:
-        cursor.execute('INSERT INTO usuarios (id, rep) VALUES (%s, %s) ON CONFLICT (id) DO UPDATE SET rep = usuarios.rep + EXCLUDED.rep RETURNING rep', (user_id, quantidade))
-    nova_pontuacao = cursor.fetchone()[0]
-    conn.commit()
-    cursor.close()
-    conn.close()
-    return nova_pontuacao
+    try:
+        cursor = conn.cursor()
+        if definir:
+            cursor.execute('INSERT INTO usuarios (id, rep) VALUES (%s, %s) ON CONFLICT (id) DO UPDATE SET rep = EXCLUDED.rep RETURNING rep', (user_id, quantidade))
+        else:
+            cursor.execute('INSERT INTO usuarios (id, rep) VALUES (%s, %s) ON CONFLICT (id) DO UPDATE SET rep = usuarios.rep + EXCLUDED.rep RETURNING rep', (user_id, quantidade))
+        res = cursor.fetchone()
+        nova_pontuacao = res[0] if res else 0
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return nova_pontuacao
+    except Exception as e:
+        print(f"❌ Erro ao alterar rep: {e}")
+        return 0
 
 # --- VERIFICAÇÕES ---
 
@@ -125,14 +128,16 @@ async def verificar_cargos_nivel(ctx, membro, pontos):
     ]
     cargo_perigoso = discord.utils.get(ctx.guild.roles, name="trocador perigoso")
 
+    # Cargo Perigoso (Negativo)
     if pontos <= -10 and cargo_perigoso:
         if cargo_perigoso not in membro.roles:
             try: await membro.add_roles(cargo_perigoso)
             except: pass
-    elif cargo_perigoso in membro.roles:
+    elif cargo_perigoso and cargo_perigoso in membro.roles:
         try: await membro.remove_roles(cargo_perigoso)
         except: pass
 
+    # Cargos Positivos
     for nivel in niveis:
         cargo = discord.utils.get(ctx.guild.roles, name=nivel["nome"])
         if cargo:
@@ -149,7 +154,7 @@ async def verificar_cargos_nivel(ctx, membro, pontos):
 async def on_ready():
     setup_db()
     print(f'✅ {bot.user.name} está ONLINE!')
-    await bot.change_presence(activity=discord.Game(name="!ajuda | ARC Raiders"))
+    await bot.change_presence(activity=discord.Game(name="!ajuda | ARC Raiders Brasil"))
 
 @bot.command()
 async def eventos(ctx):
@@ -157,20 +162,19 @@ async def eventos(ctx):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
     try:
-        msg = await ctx.send("🛰️ Buscando sinais dos satélites ARC...")
+        msg = await ctx.send("🛰️ Sintonizando radar da ARC...")
         response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code != 200:
-            return await msg.edit(content=f"❌ Site Metaforge fora do ar (Status: {response.status_code})")
+            return await msg.edit(content=f"❌ Metaforge fora de alcance (Status: {response.status_code})")
 
         soup = BeautifulSoup(response.content, 'html.parser')
-        # Procura por elementos que possam conter informações de evento
-        cards = soup.find_all('div', class_='event-card') or soup.select('.timer-card')
+        cards = soup.find_all(class_='event-card') or soup.select('.timer-card')
 
-        embed = discord.Embed(title="🛰️ Eventos em Tempo Real - ARC Raiders", color=0x2ecc71, url=url)
+        embed = discord.Embed(title="🛰️ Timers de Eventos - ARC Raiders Brasil", color=0x2ecc71, url=url)
 
         if not cards:
-            embed.description = "⚠️ Dados em tempo real ocultos por JavaScript.\n\n[Clique aqui para ver os timers no site oficial](https://metaforge.app/arc-raiders/event-timers)"
+            embed.description = "⚠️ Sensores bloqueados por JavaScript.\n\n[Clique aqui para ver os timers no site oficial](https://metaforge.app/arc-raiders/event-timers)"
         else:
             for card in cards[:6]:
                 try:
@@ -181,9 +185,8 @@ async def eventos(ctx):
 
         embed.set_footer(text="Fonte: Metaforge.app")
         await msg.edit(content=None, embed=embed)
-
     except Exception as e:
-        await ctx.send(f"❌ Erro ao processar eventos: {e}")
+        await ctx.send(f"❌ Falha no radar: {e}")
 
 # --- COMANDOS PADRÃO ---
 
@@ -191,17 +194,18 @@ async def eventos(ctx):
 async def ajuda(ctx):
     embed = discord.Embed(title="📖 Comandos do Bot", color=discord.Color.blue())
     embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação.", inline=True)
-    embed.add_field(name="👤 `!perfil @membro`", value="Ver reputação.", inline=True)
-    embed.add_field(name="🛰️ `!eventos`", value="Timers de eventos.", inline=True)
-    embed.add_field(name="🏆 `!top`", value="Top 10 trocadores.", inline=True)
+    embed.add_field(name="💢 `!neg @membro` (Staff)", value="Dá -1 de reputação.", inline=True)
+    embed.add_field(name="👤 `!perfil @membro`", value="Ver pontos.", inline=True)
+    embed.add_field(name="🛰️ `!eventos`", value="Ver timers dos mapas.", inline=True)
+    embed.add_field(name="🏆 `!top`", value="Ranking global.", inline=True)
     
     is_staff = any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator
     if is_staff:
-        embed.add_field(name="🛠️ Staff", value="`!neg`, `!setrep`, `!resetar`, `!restart`", inline=False)
-
+        embed.add_field(name="🛠️ Staff", value="`!setrep`, `!restart`", inline=False)
+    
     embed.set_footer(text="Desenvolvido por fugazzeto para ARC Raiders Brasil.")
     await ctx.send(embed=embed)
-    
+
 @bot.command()
 @commands.cooldown(1, 3600, commands.BucketType.user)
 async def rep(ctx, membro: discord.Member):
@@ -223,7 +227,7 @@ async def neg(ctx, membro: discord.Member):
 async def perfil(ctx, membro: discord.Member = None):
     membro = membro or ctx.author
     conn = get_db_connection()
-    if not conn: return
+    if not conn: return await ctx.send("❌ Banco de dados offline.")
     cursor = conn.cursor()
     cursor.execute('SELECT rep FROM usuarios WHERE id = %s', (membro.id,))
     res = cursor.fetchone()
@@ -234,8 +238,8 @@ async def perfil(ctx, membro: discord.Member = None):
     status = "🥇" if pontos >= 100 else "🥈" if pontos >= 50 else "🥉" if pontos >= 10 else "👍"
     if pontos <= -10: status = "💀"
     
-    embed = discord.Embed(title=f"Perfil de {membro.display_name}", color=discord.Color.green())
-    embed.add_field(name="Pontos de Reputação", value=f"{status} **{pontos}**")
+    embed = discord.Embed(title=f"Perfil de {membro.display_name}", color=0x3498db)
+    embed.add_field(name="Reputação", value=f"{status} **{pontos}** pontos")
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -253,7 +257,7 @@ async def top(ctx):
 @bot.command()
 @eh_staff()
 async def restart(ctx):
-    await ctx.send("🔄 Reiniciando...")
+    await ctx.send("🔄 Reiniciando bot...")
     os.execv(sys.executable, [sys.executable, __file__, str(ctx.channel.id)])
 
 @bot.command()
