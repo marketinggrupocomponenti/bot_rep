@@ -19,21 +19,20 @@ def instalar_dependencias():
             except Exception as e:
                 print(f"❌ Falha ao instalar '{lib}': {e}")
 
-# Executa a verificação antes de qualquer importação pesada
 instalar_dependencias()
 
-# --- AGORA OS IMPORTS NORMAIS ---
+# --- IMPORTS ---
 import discord
 from discord.ext import commands
 import psycopg2
 from dotenv import load_dotenv
 import requests
 from bs4 import BeautifulSoup
+from datetime import datetime
 
 # --- CARREGAMENTO DE CONFIGURAÇÕES ---
 def carregar_config():
     load_dotenv(override=True)
-    # Garante que variáveis nulas não quebrem o bot
     if not os.getenv('DISCORD_TOKEN'):
         diretorio_script = os.path.dirname(os.path.abspath(__file__))
         caminho_env = os.path.join(diretorio_script, '.env')
@@ -48,6 +47,8 @@ carregar_config()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 DATABASE_URL = os.getenv('DATABASE_URL')
+# Pega o ID do canal de logs do .env, se não existir, usa 0
+LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', 0))
 
 if not TOKEN:
     print("❌ ERRO: DISCORD_TOKEN não encontrado!")
@@ -62,7 +63,7 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 # --- BANCO DE DADOS (COM RECONEXÃO) ---
 
 def get_db_connection():
-    url = os.getenv('DATABASE_URL')
+    url = DATABASE_URL
     if not url: return None
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
@@ -109,6 +110,21 @@ def alterar_rep(user_id, quantidade, definir=False):
         print(f"❌ Erro ao alterar rep: {e}")
         return 0
 
+# --- SISTEMA DE LOGS ---
+
+async def enviar_log(ctx, mensagem, cor=0xffa500):
+    if LOG_CHANNEL_ID == 0: return
+    canal = bot.get_channel(LOG_CHANNEL_ID)
+    if canal:
+        embed = discord.Embed(
+            title="🛰️ Registro de Atividade", 
+            description=mensagem, 
+            color=cor, 
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text=f"Executor: {ctx.author.name} (ID: {ctx.author.id})")
+        await canal.send(embed=embed)
+
 # --- VERIFICAÇÕES ---
 
 def eh_staff():
@@ -128,7 +144,6 @@ async def verificar_cargos_nivel(ctx, membro, pontos):
     ]
     cargo_perigoso = discord.utils.get(ctx.guild.roles, name="trocador perigoso")
 
-    # Cargo Perigoso (Negativo)
     if pontos <= -10 and cargo_perigoso:
         if cargo_perigoso not in membro.roles:
             try: await membro.add_roles(cargo_perigoso)
@@ -137,7 +152,6 @@ async def verificar_cargos_nivel(ctx, membro, pontos):
         try: await membro.remove_roles(cargo_perigoso)
         except: pass
 
-    # Cargos Positivos
     for nivel in niveis:
         cargo = discord.utils.get(ctx.guild.roles, name=nivel["nome"])
         if cargo:
@@ -159,43 +173,34 @@ async def on_ready():
 @bot.command()
 async def eventos(ctx):
     url = "https://metaforge.app/arc-raiders/event-timers"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        msg = await ctx.send("🛰️ Sintonizando radar da ARC...")
+        msg = await ctx.send("🛰️ Escaneando satélites...")
         response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code != 200:
-            return await msg.edit(content=f"❌ Metaforge fora de alcance (Status: {response.status_code})")
-
         soup = BeautifulSoup(response.content, 'html.parser')
         cards = soup.find_all(class_='event-card') or soup.select('.timer-card')
-
+        
         embed = discord.Embed(title="🛰️ Timers de Eventos - ARC Raiders Brasil", color=0x2ecc71, url=url)
-
         if not cards:
-            embed.description = "⚠️ Sensores bloqueados por JavaScript.\n\n[Clique aqui para ver os timers no site oficial](https://metaforge.app/arc-raiders/event-timers)"
+            embed.description = "⚠️ Dados protegidos. Verifique no site oficial."
         else:
             for card in cards[:6]:
-                try:
-                    nome = card.find(['h3', 'span']).text.strip()
-                    tempo = card.find(class_='timer').text.strip()
-                    embed.add_field(name=f"📍 {nome}", value=f"⏳ `{tempo}`", inline=True)
-                except: continue
-
-        embed.set_footer(text="Fonte: Metaforge.app")
+                nome = card.find(['h3', 'span']).text.strip()
+                tempo = card.find(class_='timer').text.strip()
+                embed.add_field(name=f"📍 {nome}", value=f"⏳ `{tempo}`", inline=True)
+        
         await msg.edit(content=None, embed=embed)
-    except Exception as e:
-        await ctx.send(f"❌ Falha no radar: {e}")
+    except:
+        await ctx.send("❌ Falha no radar de eventos.")
 
 # --- COMANDOS PADRÃO ---
 
 @bot.command()
 async def ajuda(ctx):
-    embed = discord.Embed(title="📖 Comandos do Bot", color=discord.Color.blue())
+    embed = discord.Embed(title="📖 Central de Comandos", color=discord.Color.blue())
     embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação.", inline=True)
     embed.add_field(name="💢 `!neg @membro` (Staff)", value="Dá -1 de reputação.", inline=True)
-    embed.add_field(name="👤 `!perfil @membro`", value="Ver pontos.", inline=True)
+    embed.add_field(name="👤 `!perfil @membro`", value="Ver pontos e status.", inline=True)
     embed.add_field(name="🛰️ `!eventos`", value="Ver timers dos mapas.", inline=True)
     embed.add_field(name="🏆 `!top`", value="Ranking global.", inline=True)
     
@@ -211,17 +216,33 @@ async def ajuda(ctx):
 async def rep(ctx, membro: discord.Member):
     if membro == ctx.author or membro.bot:
         ctx.command.reset_cooldown(ctx)
-        return await ctx.send("❌ Você não pode dar reputação a si mesmo ou bots.")
+        return await ctx.send("❌ Alvo inválido.")
     nova = alterar_rep(membro.id, 1)
     await ctx.send(f"🌟 {ctx.author.mention} deu +1 rep para {membro.mention}!")
+    await enviar_log(ctx, f"🌟 **Reputação Positiva**\nDe: {ctx.author.mention}\nPara: {membro.mention}\nNovo Total: `{nova}`", 0x2ecc71)
     await verificar_cargos_nivel(ctx, membro, nova)
 
 @bot.command()
 @eh_staff()
 async def neg(ctx, membro: discord.Member):
     nova = alterar_rep(membro.id, -1)
-    await ctx.send(f"💢 {ctx.author.mention} deu -1 rep para {membro.mention}!")
+    await ctx.send(f"💢 {ctx.author.mention} penalizou {membro.mention} com -1 rep!")
+    await enviar_log(ctx, f"💢 **Reputação Negativa**\nPor: {ctx.author.mention}\nPara: {membro.mention}\nNovo Total: `{nova}`", 0xe74c3c)
     await verificar_cargos_nivel(ctx, membro, nova)
+
+@bot.command()
+@eh_staff()
+async def resetar(ctx, membro: discord.Member):
+    nova = alterar_rep(membro.id, 0, definir=True)
+    await ctx.send(f"♻️ Reputação de {membro.mention} foi resetada para 0.")
+    await enviar_log(ctx, f"♻️ **Reset de Reputação**\nExecutor: {ctx.author.mention}\nAlvo: {membro.mention}", 0x95a5a6)
+    await verificar_cargos_nivel(ctx, membro, nova)
+
+@bot.command()
+@eh_staff()
+async def say(ctx, *, mensagem: str):
+    await ctx.message.delete()
+    await ctx.send(mensagem)
 
 @bot.command()
 async def perfil(ctx, membro: discord.Member = None):
@@ -256,16 +277,18 @@ async def top(ctx):
 
 @bot.command()
 @eh_staff()
-async def restart(ctx):
-    await ctx.send("🔄 Reiniciando bot...")
-    os.execv(sys.executable, [sys.executable, __file__, str(ctx.channel.id)])
-
-@bot.command()
-@eh_staff()
 async def setrep(ctx, membro: discord.Member, valor: int):
     nova = alterar_rep(membro.id, valor, definir=True)
     await ctx.send(f"✅ Rep de {membro.mention} definida para `{valor}`.")
+    await enviar_log(ctx, f"🛠️ **Ajuste Manual**\nExecutor: {ctx.author.mention}\nAlvo: {membro.mention}\nValor definido: `{valor}`", 0x3498db)
     await verificar_cargos_nivel(ctx, membro, nova)
+
+@bot.command()
+@eh_staff()
+async def restart(ctx):
+    await ctx.send("🔄 Reiniciando bot...")
+    await enviar_log(ctx, "🔄 O bot foi reiniciado manualmente.")
+    os.execv(sys.executable, [sys.executable, __file__])
 
 @bot.event
 async def on_command_error(ctx, error):
