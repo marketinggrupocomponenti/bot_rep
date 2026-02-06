@@ -47,7 +47,6 @@ carregar_config()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 DATABASE_URL = os.getenv('DATABASE_URL')
-# Pega o ID do canal de logs do .env, se não existir, usa 0
 LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', 0))
 
 if not TOKEN:
@@ -116,12 +115,7 @@ async def enviar_log(ctx, mensagem, cor=0xffa500):
     if LOG_CHANNEL_ID == 0: return
     canal = bot.get_channel(LOG_CHANNEL_ID)
     if canal:
-        embed = discord.Embed(
-            title="🛰️ Registro de Atividade", 
-            description=mensagem, 
-            color=cor, 
-            timestamp=datetime.now()
-        )
+        embed = discord.Embed(title="🛰️ Registro de Atividade", description=mensagem, color=cor, timestamp=datetime.now())
         embed.set_footer(text=f"Executor: {ctx.author.name} (ID: {ctx.author.id})")
         await canal.send(embed=embed)
 
@@ -170,36 +164,13 @@ async def on_ready():
     print(f'✅ {bot.user.name} está ONLINE!')
     await bot.change_presence(activity=discord.Game(name="!ajuda | ARC Raiders Brasil"))
 
-@bot.command()
-async def eventos(ctx):
-    url = "https://metaforge.app/arc-raiders/event-timers"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        msg = await ctx.send("🛰️ Escaneando satélites...")
-        response = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        cards = soup.find_all(class_='event-card') or soup.select('.timer-card')
-        
-        embed = discord.Embed(title="🛰️ Timers de Eventos - ARC Raiders Brasil", color=0x2ecc71, url=url)
-        if not cards:
-            embed.description = "⚠️ Dados protegidos. Verifique no site oficial."
-        else:
-            for card in cards[:6]:
-                nome = card.find(['h3', 'span']).text.strip()
-                tempo = card.find(class_='timer').text.strip()
-                embed.add_field(name=f"📍 {nome}", value=f"⏳ `{tempo}`", inline=True)
-        
-        await msg.edit(content=None, embed=embed)
-    except:
-        await ctx.send("❌ Falha no radar de eventos.")
-
 # --- COMANDOS PADRÃO ---
 
 @bot.command()
 async def ajuda(ctx):
     embed = discord.Embed(title="📖 Central de Comandos", color=discord.Color.blue())
-    embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação.", inline=True)
-    embed.add_field(name="💢 `!neg @membro` (Staff)", value="Dá -1 de reputação.", inline=True)
+    embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação (1h cooldown).", inline=True)
+    embed.add_field(name="💢 `!neg @membro`", value="Dá -1 de reputação (1h cooldown).", inline=True)
     embed.add_field(name="👤 `!perfil @membro`", value="Ver pontos e status.", inline=True)
     embed.add_field(name="🛰️ `!eventos`", value="Ver timers dos mapas.", inline=True)
     embed.add_field(name="🏆 `!top`", value="Ranking global.", inline=True)
@@ -223,12 +194,17 @@ async def rep(ctx, membro: discord.Member):
     await verificar_cargos_nivel(ctx, membro, nova)
 
 @bot.command()
-@eh_staff()
+@commands.cooldown(1, 3600, commands.BucketType.user) # Adicionado cooldown de 1h
 async def neg(ctx, membro: discord.Member):
+    if membro == ctx.author or membro.bot:
+        ctx.command.reset_cooldown(ctx)
+        return await ctx.send("❌ Alvo inválido.")
     nova = alterar_rep(membro.id, -1)
-    await ctx.send(f"💢 {ctx.author.mention} penalizou {membro.mention} com -1 rep!")
-    await enviar_log(ctx, f"💢 **Reputação Negativa**\nPor: {ctx.author.mention}\nPara: {membro.mention}\nNovo Total: `{nova}`", 0xe74c3c)
+    await ctx.send(f"💢 {ctx.author.mention} deu -1 rep para {membro.mention}!")
+    await enviar_log(ctx, f"💢 **Reputação Negativa**\nDe: {ctx.author.mention}\nPara: {membro.mention}\nNovo Total: `{nova}`", 0xe74c3c)
     await verificar_cargos_nivel(ctx, membro, nova)
+
+# --- COMANDOS DE STAFF ---
 
 @bot.command()
 @eh_staff()
@@ -245,37 +221,6 @@ async def say(ctx, *, mensagem: str):
     await ctx.send(mensagem)
 
 @bot.command()
-async def perfil(ctx, membro: discord.Member = None):
-    membro = membro or ctx.author
-    conn = get_db_connection()
-    if not conn: return await ctx.send("❌ Banco de dados offline.")
-    cursor = conn.cursor()
-    cursor.execute('SELECT rep FROM usuarios WHERE id = %s', (membro.id,))
-    res = cursor.fetchone()
-    pontos = res[0] if res else 0
-    cursor.close()
-    conn.close()
-    
-    status = "🥇" if pontos >= 100 else "🥈" if pontos >= 50 else "🥉" if pontos >= 10 else "👍"
-    if pontos <= -10: status = "💀"
-    
-    embed = discord.Embed(title=f"Perfil de {membro.display_name}", color=0x3498db)
-    embed.add_field(name="Reputação", value=f"{status} **{pontos}** pontos")
-    await ctx.send(embed=embed)
-
-@bot.command()
-async def top(ctx):
-    conn = get_db_connection()
-    if not conn: return
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, rep FROM usuarios ORDER BY rep DESC LIMIT 10')
-    lb = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    msg = "🏆 **RANKING DE REPUTAÇÃO**\n" + "\n".join([f"`{i}.` <@{uid}> - **{r}**" for i, (uid, r) in enumerate(lb, 1)])
-    await ctx.send(msg)
-
-@bot.command()
 @eh_staff()
 async def setrep(ctx, membro: discord.Member, valor: int):
     nova = alterar_rep(membro.id, valor, definir=True)
@@ -288,11 +233,4 @@ async def setrep(ctx, membro: discord.Member, valor: int):
 async def restart(ctx):
     await ctx.send("🔄 Reiniciando bot...")
     await enviar_log(ctx, "🔄 O bot foi reiniciado manualmente.")
-    os.execv(sys.executable, [sys.executable, __file__])
-
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandOnCooldown):
-        await ctx.send(f"⏳ Aguarde {int(error.retry_after)}s.")
-
-bot.run(TOKEN)
+    os
