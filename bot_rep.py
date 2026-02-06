@@ -5,6 +5,8 @@ import psycopg2
 from dotenv import load_dotenv
 from datetime import timedelta
 import sys
+import requests
+from bs4 import BeautifulSoup  # Importação necessária para o scraping
 
 # --- CARREGAMENTO DE CONFIGURAÇÕES ---
 def carregar_config():
@@ -137,15 +139,12 @@ async def on_ready():
     print(f'✅ {bot.user.name} está ONLINE!')
     await bot.change_presence(activity=discord.Game(name="Digite: !ajuda"))
 
-    # VERIFICAÇÃO DE RESTART: Avisa no canal se o bot foi reiniciado por comando
     if len(sys.argv) > 1:
         try:
             channel_id = int(sys.argv[-1])
             channel = bot.get_channel(channel_id)
             if channel:
                 await channel.send("✅ **Bot online!** O processo de reinicialização foi concluído.")
-            
-            # Remove o argumento para evitar loops de mensagem em crash
             sys.argv.pop()
         except Exception:
             pass
@@ -156,17 +155,61 @@ async def on_ready():
 async def ajuda(ctx):
     embed = discord.Embed(title="📖 Bot de Reputação - ARC Raiders Brasil", color=discord.Color.blue())
     embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação (1 uso/hora).", inline=False)
-    embed.add_field(name="💢 `!neg @membro`", value="Dá -1 de reputação (1 uso/hora).", inline=False)
-    embed.add_field(name="👤 `!perfil @membro`", value="Ver reputação e medalha de alguém.", inline=False)
-    embed.add_field(name="🏆 `!top`", value="Ranking dos 10 melhores trocadores.", inline=False)
+    embed.add_field(name="💢 `!neg @membro`", value="Dá -1 de reputação.", inline=False)
+    embed.add_field(name="👤 `!perfil @membro`", value="Ver reputação e medalha.", inline=False)
+    embed.add_field(name="🏆 `!top`", value="Ranking dos 10 melhores.", inline=False)
+    embed.add_field(name="🛰️ `!eventos`", value="Ver cronômetro de eventos do jogo.", inline=False)
     
-    # Verifica se é staff para mostrar comandos extras
     is_staff = any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator
     if is_staff:
         embed.add_field(name="🛠️ Staff", value="`!setrep`, `!resetar`, `!restart`, `!say`", inline=False)
     
     embed.set_footer(text="Desenvolvido por fugazzeto para ARC Raiders Brasil.")
     await ctx.send(embed=embed)
+
+@bot.command()
+async def eventos(ctx):
+    """Verifica os eventos de mapa via Metaforge"""
+    url_site = "https://metaforge.app/arc-raiders/event-timers"
+    # User-Agent para evitar ser bloqueado como bot básico
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+
+    try:
+        msg_espere = await ctx.send("🛰️ Conectando ao Metaforge... Aguarde.")
+        response = requests.get(url_site, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            return await msg_espere.edit(content="❌ Erro ao acessar o site (Status: " + str(response.status_code) + ").")
+
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # O seletor abaixo é uma tentativa baseada em estruturas comuns. 
+        # Como o site usa React/Next.js, se os cards não aparecerem, o bot avisará o link.
+        eventos_cards = soup.find_all('div', class_='event-card') or soup.find_all('div', class_='timer-card')
+
+        embed = discord.Embed(
+            title="🛰️ Cronômetro de Eventos - ARC Raiders Brasil",
+            description="Informações de eventos em tempo real.",
+            color=0x2ecc71,
+            url=url_site
+        )
+
+        if not eventos_cards:
+            embed.description = "⚠️ Não foi possível ler os timers automaticamente (o site usa carregamento dinâmico).\n\n**Confira aqui:** [Metaforge Event Timers](https://metaforge.app/arc-raiders/event-timers)"
+        else:
+            for card in eventos_cards:
+                try:
+                    nome = card.find(['h3', 'h4', 'span']).text.strip()
+                    tempo = card.find('span', class_='timer').text.strip()
+                    embed.add_field(name=f"📍 {nome}", value=f"⏳ `{tempo}`", inline=False)
+                except:
+                    continue
+
+        embed.set_footer(text="Dados via Metaforge.app")
+        await msg_espere.edit(content=None, embed=embed)
+
+    except Exception as e:
+        await ctx.send(f"❌ Erro ao buscar eventos: {e}")
 
 @bot.command()
 @commands.cooldown(1, 3600, commands.BucketType.user)
@@ -217,8 +260,6 @@ async def top(ctx):
     msg = "🏆 **RANKING DE REPUTAÇÃO**\n" + "\n".join([f"`{i}.` <@{uid}> - **{r}**" for i, (uid, r) in enumerate(lb, 1)])
     await ctx.send(msg)
 
-# --- COMANDOS DE STAFF (CONTROLE) ---
-
 @bot.command()
 @eh_staff()
 async def setrep(ctx, membro: discord.Member, valor: int):
@@ -235,32 +276,19 @@ async def resetar(ctx, membro: discord.Member):
 @bot.command()
 @eh_staff()
 async def restart(ctx):
-    """Reinicia o bot e passa o ID do canal atual como argumento"""
-    await ctx.send("🔄 O bot está sendo reiniciado e estará online em poucos segundos.")
-    # Inicia um novo processo do python com o canal atual como argumento extra
+    await ctx.send("🔄 O bot está sendo reiniciado...")
     os.execv(sys.executable, [sys.executable, __file__, str(ctx.channel.id)])
 
 @bot.command()
 @eh_staff()
 async def say(ctx, *, mensagem: str):
-    """Faz o bot repetir uma mensagem (Apenas Mods e Admin)"""
-    try:
-        # Tenta deletar a mensagem do usuário para o comando ficar 'invisível'
-        await ctx.message.delete()
-    except:
-        # Caso o bot não tenha permissão de gerenciar mensagens, ele ignora o erro
-        pass
-    
-    # Envia a mensagem digitada
+    try: await ctx.message.delete()
+    except: pass
     await ctx.send(mensagem)
-
-# --- TRATAMENTO DE ERROS ---
 
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
         await ctx.send(f"⏳ Aguarde {int(error.retry_after)}s.")
-    elif isinstance(error, commands.CheckFailure):
-        pass
 
 bot.run(TOKEN)
