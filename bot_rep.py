@@ -1,27 +1,3 @@
-import subprocess
-import sys
-import os
-
-# --- SISTEMA DE AUTO-INSTALAÇÃO DE DEPENDÊNCIAS ---
-def instalar_dependencias():
-    dependencias = ["requests", "beautifulsoup4", "psycopg2-binary", "python-dotenv", "discord.py"]
-    for lib in dependencias:
-        try:
-            if lib == "beautifulsoup4":
-                __import__("bs4")
-            else:
-                __import__(lib.replace("-binary", ""))
-        except ImportError:
-            print(f"📦 Dependência '{lib}' não encontrada. Instalando...")
-            try:
-                subprocess.check_call([sys.executable, "-m", "pip", "install", lib])
-                print(f"✅ '{lib}' instalada com sucesso!")
-            except Exception as e:
-                print(f"❌ Falha ao instalar '{lib}': {e}")
-
-instalar_dependencias()
-
-# --- IMPORTS ---
 import discord
 from discord.ext import commands
 import psycopg2
