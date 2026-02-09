@@ -1,4 +1,5 @@
 import os
+import sys
 import discord
 from discord.ext import commands
 import psycopg2
@@ -10,6 +11,7 @@ from datetime import datetime
 # --- CARREGAMENTO DE CONFIGURAÇÕES ---
 def carregar_config():
     load_dotenv(override=True)
+    # No Railway, as variáveis vêm do painel. Se local, tenta carregar o .env
     if not os.getenv('DISCORD_TOKEN'):
         diretorio_script = os.path.dirname(os.path.abspath(__file__))
         caminho_env = os.path.join(diretorio_script, '.env')
@@ -28,18 +30,20 @@ LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', 0))
 
 if not TOKEN:
     print("❌ ERRO: DISCORD_TOKEN não encontrado!")
-    sys.exit()
+    sys.exit(1)
 
+# --- CONFIGURAÇÃO DO BOT ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# --- BANCO DE DADOS (COM RECONEXÃO) ---
-
+# --- BANCO DE DADOS ---
 def get_db_connection():
+    if not DATABASE_URL: 
+        print("⚠️ DATABASE_URL não configurada.")
+        return None
     url = DATABASE_URL
-    if not url: return None
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
     try:
@@ -57,12 +61,13 @@ def setup_db():
             CREATE TABLE IF NOT EXISTS usuarios (
                 id BIGINT PRIMARY KEY,
                 rep INTEGER DEFAULT 0,
-                ultima_rep TEXT
+                ultima_rep TIMESTAMP
             )
         ''')
         conn.commit()
         cursor.close()
         conn.close()
+        print("✅ Banco de dados pronto.")
     except Exception as e:
         print(f"❌ Erro no Setup do Banco: {e}")
 
@@ -86,17 +91,15 @@ def alterar_rep(user_id, quantidade, definir=False):
         return 0
 
 # --- SISTEMA DE LOGS ---
-
 async def enviar_log(ctx, mensagem, cor=0xffa500):
     if LOG_CHANNEL_ID == 0: return
     canal = bot.get_channel(LOG_CHANNEL_ID)
     if canal:
         embed = discord.Embed(title="🛰️ Registro de Atividade", description=mensagem, color=cor, timestamp=datetime.now())
-        embed.set_footer(text=f"Executor: {ctx.author.name} (ID: {ctx.author.id})")
+        embed.set_footer(text=f"Executor: {ctx.author.name}")
         await canal.send(embed=embed)
 
-# --- VERIFICAÇÕES ---
-
+# --- VERIFICAÇÕES DE STAFF ---
 def eh_staff():
     async def predicate(ctx):
         is_mod = any(role.name.lower() == "mods" for role in ctx.author.roles)
@@ -118,7 +121,7 @@ async def verificar_cargos_nivel(ctx, membro, pontos):
         if cargo_perigoso not in membro.roles:
             try: await membro.add_roles(cargo_perigoso)
             except: pass
-    elif cargo_perigoso and cargo_perigoso in membro.roles:
+    elif cargo_perigoso and cargo_perigoso in membro.roles and pontos > -10:
         try: await membro.remove_roles(cargo_perigoso)
         except: pass
 
@@ -133,23 +136,20 @@ async def verificar_cargos_nivel(ctx, membro, pontos):
                 except: pass
 
 # --- EVENTOS ---
-
 @bot.event
 async def on_ready():
     setup_db()
     print(f'✅ {bot.user.name} está ONLINE!')
     await bot.change_presence(activity=discord.Game(name="!ajuda | ARC Raiders Brasil"))
 
-# --- COMANDOS PADRÃO ---
-
+# --- COMANDOS ---
 @bot.command()
 async def ajuda(ctx):
     embed = discord.Embed(title="📖 Central de Comandos", color=discord.Color.blue())
     embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação (1h cooldown).", inline=True)
     embed.add_field(name="💢 `!neg @membro`", value="Dá -1 de reputação (1h cooldown).", inline=True)
-    embed.add_field(name="👤 `!perfil @membro`", value="Ver pontos e status.", inline=True)
-    embed.add_field(name="🛰️ `!eventos`", value="Ver timers dos mapas.", inline=True)
-    embed.add_field(name="🏆 `!top`", value="Ranking global.", inline=True)
+    embed.add_field(name="👤 `!perfil @membro`", value="Ver reputação e medalha.", inline=True)
+    embed.add_field(name="🏆 `!top`", value="Melhores trocadores.", inline=True)
     
     is_staff = any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator
     if is_staff:
@@ -163,36 +163,72 @@ async def ajuda(ctx):
 async def rep(ctx, membro: discord.Member):
     if membro == ctx.author or membro.bot:
         ctx.command.reset_cooldown(ctx)
-        return await ctx.send("❌ Alvo inválido.")
+        return await ctx.send("❌ Você não pode dar reputação para si mesmo ou bots.")
     nova = alterar_rep(membro.id, 1)
     await ctx.send(f"🌟 {ctx.author.mention} deu +1 rep para {membro.mention}!")
-    await enviar_log(ctx, f"🌟 **Reputação Positiva**\nDe: {ctx.author.mention}\nPara: {membro.mention}\nNovo Total: `{nova}`", 0x2ecc71)
+    await enviar_log(ctx, f"🌟 **Reputação Positiva**\nPara: {membro.mention}\nNovo Total: `{nova}`", 0x2ecc71)
     await verificar_cargos_nivel(ctx, membro, nova)
 
 @bot.command()
-@commands.cooldown(1, 3600, commands.BucketType.user) # Adicionado cooldown de 1h
+@commands.cooldown(1, 3600, commands.BucketType.user)
 async def neg(ctx, membro: discord.Member):
     if membro == ctx.author or membro.bot:
         ctx.command.reset_cooldown(ctx)
         return await ctx.send("❌ Alvo inválido.")
     nova = alterar_rep(membro.id, -1)
     await ctx.send(f"💢 {ctx.author.mention} deu -1 rep para {membro.mention}!")
-    await enviar_log(ctx, f"💢 **Reputação Negativa**\nDe: {ctx.author.mention}\nPara: {membro.mention}\nNovo Total: `{nova}`", 0xe74c3c)
+    await enviar_log(ctx, f"💢 **Reputação Negativa**\nPara: {membro.mention}\nNovo Total: `{nova}`", 0xe74c3c)
     await verificar_cargos_nivel(ctx, membro, nova)
+
+@bot.command()
+async def perfil(ctx, membro: discord.Member = None):
+    membro = membro or ctx.author
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT rep FROM usuarios WHERE id = %s', (membro.id,))
+    res = cursor.fetchone()
+    pontos = res[0] if res else 0
+    cursor.close()
+    conn.close()
+    
+    status = "Neutro"
+    if pontos >= 100: status = "Trocador Oficial 💎"
+    elif pontos >= 50: status = "Trocador Confiável ✅"
+    elif pontos <= -10: status = "Trocador Perigoso ❌"
+
+    embed = discord.Embed(title=f"Perfil de {membro.name}", color=discord.Color.gold())
+    embed.add_field(name="Pontos de Reputação", value=f"`{pontos}`", inline=True)
+    embed.add_field(name="Status", value=status, inline=True)
+    embed.set_thumbnail(url=membro.display_avatar.url)
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def top(ctx):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, rep FROM usuarios ORDER BY rep DESC LIMIT 10')
+    usuarios = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    if not usuarios:
+        return await ctx.send("O ranking está vazio.")
+
+    lista = ""
+    for i, (uid, pontos) in enumerate(usuarios, 1):
+        user = bot.get_user(uid)
+        nome = user.name if user else f"Usuário {uid}"
+        lista += f"**{i}.** {nome} — `{pontos} pts` \n"
+
+    embed = discord.Embed(title="🏆 Top 10 Reputação", description=lista, color=0xf1c40f)
+    await ctx.send(embed=embed)
 
 # --- COMANDOS DE STAFF ---
 
 @bot.command()
 @eh_staff()
-async def resetar(ctx, membro: discord.Member):
-    nova = alterar_rep(membro.id, 0, definir=True)
-    await ctx.send(f"♻️ Reputação de {membro.mention} foi resetada para 0.")
-    await enviar_log(ctx, f"♻️ **Reset de Reputação**\nExecutor: {ctx.author.mention}\nAlvo: {membro.mention}", 0x95a5a6)
-    await verificar_cargos_nivel(ctx, membro, nova)
-
-@bot.command()
-@eh_staff()
 async def say(ctx, *, mensagem: str):
+    """Faz o bot falar uma mensagem e apaga o comando do autor."""
     await ctx.message.delete()
     await ctx.send(mensagem)
 
@@ -201,12 +237,26 @@ async def say(ctx, *, mensagem: str):
 async def setrep(ctx, membro: discord.Member, valor: int):
     nova = alterar_rep(membro.id, valor, definir=True)
     await ctx.send(f"✅ Rep de {membro.mention} definida para `{valor}`.")
-    await enviar_log(ctx, f"🛠️ **Ajuste Manual**\nExecutor: {ctx.author.mention}\nAlvo: {membro.mention}\nValor definido: `{valor}`", 0x3498db)
+    await enviar_log(ctx, f"🛠️ **Ajuste Manual**\nAlvo: {membro.mention}\nValor: `{valor}`", 0x3498db)
+    await verificar_cargos_nivel(ctx, membro, nova)
+
+@bot.command()
+@eh_staff()
+async def resetar(ctx, membro: discord.Member):
+    nova = alterar_rep(membro.id, 0, definir=True)
+    await ctx.send(f"♻️ Reputação de {membro.mention} foi resetada.")
+    await enviar_log(ctx, f"♻️ **Reset de Reputação**\nAlvo: {membro.mention}", 0x95a5a6)
     await verificar_cargos_nivel(ctx, membro, nova)
 
 @bot.command()
 @eh_staff()
 async def restart(ctx):
     await ctx.send("🔄 Reiniciando bot...")
-    await enviar_log(ctx, "🔄 O bot foi reiniciado manualmente.")
-    os
+    sys.exit(0)
+
+# --- INICIALIZAÇÃO FINAL ---
+if __name__ == "__main__":
+    try:
+        bot.run(TOKEN)
+    except Exception as e:
+        print(f"❌ Falha crítica ao iniciar o bot: {e}")
