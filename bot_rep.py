@@ -158,27 +158,46 @@ async def ajuda(ctx):
     embed.set_footer(text="Desenvolvido por fugazzeto para ARC Raiders Brasil.")
     await ctx.send(embed=embed)
 
+# --- COMANDO REP (POSITIVA) ---
 @bot.command()
-@commands.cooldown(1, 3600, commands.BucketType.user)
+@commands.cooldown(1, 7200, commands.BucketType.user) # 7200s = 2 horas
 async def rep(ctx, membro: discord.Member):
-    if membro == ctx.author or membro.bot:
+    if membro.id == ctx.author.id or membro.bot:
         ctx.command.reset_cooldown(ctx)
         return await ctx.send("❌ Você não pode dar reputação para si mesmo ou bots.")
+    
     nova = alterar_rep(membro.id, 1)
     await ctx.send(f"🌟 {ctx.author.mention} deu +1 rep para {membro.mention}!")
     await enviar_log(ctx, f"🌟 **Reputação Positiva**\nPara: {membro.mention}\nNovo Total: `{nova}`", 0x2ecc71)
     await verificar_cargos_nivel(ctx, membro, nova)
 
+# --- COMANDO NEG (NEGATIVA) ---
 @bot.command()
-@commands.cooldown(1, 3600, commands.BucketType.user)
+@commands.cooldown(1, 7200, commands.BucketType.user) # 7200s = 2 horas
 async def neg(ctx, membro: discord.Member):
-    if membro == ctx.author or membro.bot:
+    if membro.id == ctx.author.id or membro.bot:
         ctx.command.reset_cooldown(ctx)
         return await ctx.send("❌ Alvo inválido.")
+    
     nova = alterar_rep(membro.id, -1)
     await ctx.send(f"💢 {ctx.author.mention} deu -1 rep para {membro.mention}!")
     await enviar_log(ctx, f"💢 **Reputação Negativa**\nPara: {membro.mention}\nNovo Total: `{nova}`", 0xe74c3c)
     await verificar_cargos_nivel(ctx, membro, nova)
+
+# --- TRATAMENTO DE ERRO DE COOLDOWN ---
+@rep.error
+@neg.error
+async def cooldown_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        minutos_restantes = int(error.retry_after // 60)
+        horas = minutos_restantes // 60
+        minutos = minutos_restantes % 60
+        
+        msg_tempo = f"{horas}h e {minutos}min" if horas > 0 else f"{minutos} minutos"
+        await ctx.send(f"⏳ {ctx.author.mention}, aguarde **{msg_tempo}** para usar este comando novamente.", delete_after=10)
+    else:
+        # Se for outro erro (ex: membro não encontrado), o bot avisa
+        await ctx.send(f"❌ Ocorreu um erro: {error}", delete_after=5)
 
 @bot.command()
 async def perfil(ctx, membro: discord.Member = None):
