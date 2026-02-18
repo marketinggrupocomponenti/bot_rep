@@ -80,28 +80,33 @@ async def enviar_log(ctx, mensagem, cor=0xffa500):
 
 # --- CHECKS (VERIFICAÇÕES) ---
 
-# 1. Trava de Canais (Global)
 @bot.check
 async def verificar_canal(ctx):
     if isinstance(ctx.channel, discord.DMChannel): 
         return False
     
-    # ID do canal #troca-de-itens (o primeiro da sua lista)
-    ID_TROCA_ITENS = 1434310955004592360
-    
-    # Verificações
+    # IDs das suas configurações
+    ID_FORUM_TROCA = 1434310955004592360
+    ID_CANAL_STAFF = 1412423356946317350
+
+    # Verificações de Identidade
     is_admin = ctx.author.guild_permissions.administrator
     is_mod = any(role.name.lower() == "mods" for role in ctx.author.roles)
-    no_canal_troca = ctx.channel.id == ID_TROCA_ITENS
-    no_canal_staff = ctx.channel.id == 1412423356946317350 # Segundo ID da sua lista
-
-    # REGRA: 
-    # - Se for Admin ou Mod, pode usar no canal de staff ou de troca.
-    # - Se for Membro comum, só pode usar se estiver no canal de troca.
-    if is_admin or is_mod:
-        return ctx.channel.id in CANAIS_PERMITIDOS
     
-    return no_canal_troca
+    # Identificar se o canal atual é uma Thread (Post de Fórum)
+    # Se for thread, o parent_id é o ID do Canal de Fórum
+    parent_id = getattr(ctx.channel, "parent_id", None)
+    
+    no_forum_troca = (ctx.channel.id == ID_FORUM_TROCA or parent_id == ID_FORUM_TROCA)
+    no_canal_staff = (ctx.channel.id == ID_CANAL_STAFF or parent_id == ID_CANAL_STAFF)
+
+    # REGRA:
+    # 1. Staff (Admin/Mod) pode usar no Fórum (em tópicos ou na raiz) e no canal de Staff
+    if is_admin or is_mod:
+        return no_forum_troca or no_canal_staff
+    
+    # 2. Membros Comuns: Só podem usar se estiverem DENTRO de um tópico do Fórum de Trocas
+    return no_forum_troca
 
 # 2. Check de Staff
 def eh_staff():
