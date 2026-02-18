@@ -39,7 +39,7 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# --- BANCO DE DADOS --- (Mantido igual ao seu)
+# --- BANCO DE DADOS ---
 def get_db_connection():
     if not DATABASE_URL: return None
     url = DATABASE_URL.replace("postgres://", "postgresql://", 1) if DATABASE_URL.startswith("postgres://") else DATABASE_URL
@@ -137,10 +137,56 @@ async def ajuda(ctx):
     embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação.", inline=True)
     embed.add_field(name="💢 `!neg @membro`", value="Dá -1 de reputação.", inline=True)
     embed.add_field(name="👤 `!perfil @membro`", value="Ver reputação.", inline=True)
+    embed.add_field(name="🏆 `!top`", value="Ver o ranking dos 10 melhores.", inline=True) # <-- Linha nova
+    
     if any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator:
         embed.add_field(name="🛠️ Staff", value="`!setrep`, `!resetar`, `!restart`, `!say`", inline=False)
-    await ctx.send(embed=embed)
+    
     embed.set_footer(text="Desenvolvido por fugazzeto para ARC Raiders Brasil.")
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def top(ctx):
+    conn = get_db_connection()
+    if not conn:
+        return await ctx.send("❌ Erro ao conectar ao banco de dados.")
+    
+    cursor = conn.cursor()
+    # Limitamos a busca aos 10 melhores
+    cursor.execute('SELECT id, rep FROM usuarios ORDER BY rep DESC LIMIT 10')
+    usuarios = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    if not usuarios:
+        return await ctx.send("⚠️ O ranking ainda está vazio.")
+
+    descricao = ""
+    for i, (uid, pontos) in enumerate(usuarios, 1):
+        # Tenta buscar o nome do usuário
+        user = bot.get_user(uid)
+        nome = user.name if user else f"Usuário Antigo ({uid})"
+        
+        # Formatação visual do ranking
+        if i == 1:
+            prefixo = "🥇 "
+        elif i == 2:
+            prefixo = "🥈 "
+        elif i == 3:
+            prefixo = "🥉 "
+        else:
+            prefixo = f"**{i}.** "
+
+        descricao += f"{prefixo}{nome} — `{pontos} pts` \n"
+
+    embed = discord.Embed(
+        title="🏆 Top 10 - Maiores Reputações",
+        description=descricao,
+        color=0xf1c40f, # Cor dourada
+        timestamp=datetime.now()
+    )
+    embed.set_footer(text="ARC Raiders Brasil | Ranking de Confiança")
+    
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -179,6 +225,7 @@ async def perfil(ctx, membro: discord.Member = None):
     status = "Neutro"
     if pontos >= 100: status = "Trocador Oficial 💎"
     elif pontos >= 50: status = "Trocador Confiável ✅"
+    elif pontos >= 10: status = "Trocador Iniciante ✅"
     elif pontos <= -10: status = "Trocador Perigoso ❌"
     embed = discord.Embed(title=f"Perfil de {membro.name}", color=discord.Color.gold())
     embed.add_field(name="Pontos", value=f"`{pontos}`", inline=True)
