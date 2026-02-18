@@ -27,7 +27,7 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 DATABASE_URL = os.getenv('DATABASE_URL')
 LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', 0))
 # IDs ou nomes dos canais permitidos
-CANAIS_PERMITIDOS = [1412423356946317350, 1434310955004592360]
+CANAIS_PERMITIDOS = [1434310955004592360, 1412423356946317350]
 
 if not TOKEN:
     print("❌ ERRO: DISCORD_TOKEN não encontrado!")
@@ -83,11 +83,25 @@ async def enviar_log(ctx, mensagem, cor=0xffa500):
 # 1. Trava de Canais (Global)
 @bot.check
 async def verificar_canal(ctx):
-    if isinstance(ctx.channel, discord.DMChannel): return False
-    # Permite se estiver no canal certo OU se for Admin
-    if ctx.channel.name in CANAIS_PERMITIDOS or ctx.author.guild_permissions.administrator:
-        return True
-    return False
+    if isinstance(ctx.channel, discord.DMChannel): 
+        return False
+    
+    # ID do canal #troca-de-itens (o primeiro da sua lista)
+    ID_TROCA_ITENS = 1434310955004592360
+    
+    # Verificações
+    is_admin = ctx.author.guild_permissions.administrator
+    is_mod = any(role.name.lower() == "mods" for role in ctx.author.roles)
+    no_canal_troca = ctx.channel.id == ID_TROCA_ITENS
+    no_canal_staff = ctx.channel.id == 1412423356946317350 # Segundo ID da sua lista
+
+    # REGRA: 
+    # - Se for Admin ou Mod, pode usar no canal de staff ou de troca.
+    # - Se for Membro comum, só pode usar se estiver no canal de troca.
+    if is_admin or is_mod:
+        return ctx.channel.id in CANAIS_PERMITIDOS
+    
+    return no_canal_troca
 
 # 2. Check de Staff
 def eh_staff():
@@ -246,7 +260,9 @@ async def on_command_error(ctx, error):
         minutos = int(error.retry_after // 60)
         await ctx.send(f"⏳ Aguarde {minutos} minutos.", delete_after=10)
     elif isinstance(error, commands.CheckFailure):
-        pass # Ignora erros de canal proibido
+        # Opcional: Avisar que o canal está errado
+        if not ctx.author.guild_permissions.administrator:
+             await ctx.send(f"❌ {ctx.author.mention}, este comando não pode ser usado aqui.", delete_after=7)
 
 if __name__ == "__main__":
     setup_db()
