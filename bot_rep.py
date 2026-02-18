@@ -38,6 +38,8 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+CANAIS_PERMITIDOS = [1412423356946317350, 1434310955004592360]
+
 # --- BANCO DE DADOS ---
 def get_db_connection():
     if not DATABASE_URL: 
@@ -135,6 +137,24 @@ async def verificar_cargos_nivel(ctx, membro, pontos):
                 try: await membro.remove_roles(cargo)
                 except: pass
 
+@bot.check
+async def verificar_canal(ctx):
+    # Se for mensagem direta (DM), bloqueia (opcional)
+    if isinstance(ctx.channel, discord.DMChannel):
+        return False
+
+    # Verifica se o canal atual está na lista de permitidos
+    # ou se o usuário tem permissão de Administrador (para evitar que a staff fique presa)
+    is_canal_permitido = ctx.channel.name in CANAIS_PERMITIDOS
+    is_admin = ctx.author.guild_permissions.administrator
+
+    if is_canal_permitido or is_admin:
+        return True
+    
+    # Mensagem opcional de aviso (cuidado para não poluir canais errados)
+    # await ctx.send(f"❌ {ctx.author.mention}, este comando só pode ser usado em #troca-de-itens.", delete_after=5)
+    return False
+
 # --- EVENTOS ---
 @bot.event
 async def on_ready():
@@ -160,7 +180,8 @@ async def ajuda(ctx):
 
 # --- COMANDO REP (POSITIVA) ---
 @bot.command()
-@commands.cooldown(1, 7200, commands.BucketType.user) # 7200s = 2 horas
+@commands.cooldown(1, 7200, commands.BucketType.user)
+@ignora_cooldown_staff() # <--- Adicione aqui
 async def rep(ctx, membro: discord.Member):
     if membro.id == ctx.author.id or membro.bot:
         ctx.command.reset_cooldown(ctx)
@@ -173,7 +194,8 @@ async def rep(ctx, membro: discord.Member):
 
 # --- COMANDO NEG (NEGATIVA) ---
 @bot.command()
-@commands.cooldown(1, 7200, commands.BucketType.user) # 7200s = 2 horas
+@commands.cooldown(1, 7200, commands.BucketType.user)
+@ignora_cooldown_staff() # <--- Adicione aqui
 async def neg(ctx, membro: discord.Member):
     if membro.id == ctx.author.id or membro.bot:
         ctx.command.reset_cooldown(ctx)
@@ -188,6 +210,9 @@ async def neg(ctx, membro: discord.Member):
 @rep.error
 @neg.error
 async def cooldown_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        # Ignora silenciosamente se o comando for usado no canal errado
+        return
     if isinstance(error, commands.CommandOnCooldown):
         minutos_restantes = int(error.retry_after // 60)
         horas = minutos_restantes // 60
@@ -272,6 +297,18 @@ async def resetar(ctx, membro: discord.Member):
 async def restart(ctx):
     await ctx.send("🔄 Reiniciando bot...")
     sys.exit(0)
+
+def ignora_cooldown_staff():
+    async def predicate(ctx):
+        # Verifica se é admin ou tem o cargo "mods"
+        is_mod = any(role.name.lower() == "mods" for role in ctx.author.roles)
+        is_admin = ctx.author.guild_permissions.administrator
+        
+        if is_mod or is_admin:
+            # Se for staff, resetamos o cooldown do comando atual para este usuário
+            ctx.command.reset_cooldown(ctx)
+        return True
+    return commands.check(predicate)
 
 # --- INICIALIZAÇÃO FINAL ---
 if __name__ == "__main__":
