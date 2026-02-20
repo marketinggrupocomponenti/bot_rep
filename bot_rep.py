@@ -149,17 +149,43 @@ async def on_ready():
     print(f'✅ {bot.user.name} está ONLINE!')
     await bot.change_presence(activity=discord.Game(name="!ajuda | ARC Raiders Brasil"))
 
+@bot.event
+async def on_thread_create(thread):
+    # ID do teu fórum de trocas
+    ID_FORUM_TROCA = 1434310955004592360 
+
+    # Verifica se a thread (post) foi criada dentro do canal de fórum correto
+    if thread.parent_id == ID_FORUM_TROCA:
+        # Mensagem que o bot enviará assim que o post for aberto
+        embed = discord.Embed(
+            title="📦 Nova Troca Iniciada!",
+            description=(
+                f"Olá {thread.owner.mention}, bem-vindo ao sistema de trocas!\n\n"
+                "**Dicas de Segurança:**\n"
+                "1. Verifique sempre o `!perfil` do raider antes fazer a trocar.\n"
+                "2. Use o comando `!rep @membro` apenas após a troca ser concluída com sucesso.\n"
+                "3. Para finalizar sua troca e fecharmos seu tópico, utilize o comando `!finalizar`.\n"
+                "4. Se por acaso for scammado, abra um ticket acionando nossos **mods** imediatamente e use o comando `!neg @membro` para negativar o raider.\n"
+            ),
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text="ARC Raiders Brasil - Sistema de Troca e Reputação")
+        
+        # Envia a mensagem no tópico recém-criado
+        await thread.send(embed=embed)    
+
 # --- COMANDOS ---
 @bot.command()
 async def ajuda(ctx):
-    embed = discord.Embed(title="📖 Central de Comandos", color=discord.Color.blue())
+    embed = discord.Embed(title="📖 Lista de Comandos", color=discord.Color.blue())
     embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação.", inline=True)
     embed.add_field(name="💢 `!neg @membro`", value="Dá -1 de reputação.", inline=True)
     embed.add_field(name="👤 `!perfil @membro`", value="Ver reputação.", inline=True)
-    embed.add_field(name="🏆 `!top`", value="Ver o ranking dos 10 melhores.", inline=True) # <-- Linha nova
+    embed.add_field(name="✅ `!finalizar`", value="Finaliza e fecha uma troca.", inline=True)
+    embed.add_field(name="🏆 `!top`", value="Ver o ranking dos 10 melhores trocadores.", inline=True)
     
     if any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator:
-        embed.add_field(name="🛠️ Staff", value="`!setrep`, `!resetar`, `!restart`, `!say`", inline=False)
+        embed.add_field(name="🛠️ Staff", value="`!setrep`, `!resetar`, `!say`", inline=False)
     
     embed.set_footer(text="Desenvolvido por fugazzeto para ARC Raiders Brasil.")
     await ctx.send(embed=embed)
@@ -221,12 +247,48 @@ async def rep(ctx, membro: discord.Member):
     await verificar_cargos_nivel(ctx, membro, nova)
 
 @bot.command()
+async def finalizar(ctx):
+    """Fecha e arquiva o tópico, apenas se estiver dentro do Fórum de Trocas."""
+    
+    # ID do teu fórum de trocas
+    ID_FORUM_TROCA = 1434310955004592360
+
+    # 1. Verifica se o canal atual é uma thread (post)
+    if not isinstance(ctx.channel, discord.Thread):
+        return await ctx.send("❌ Este comando só funciona dentro de tópicos do fórum.", delete_after=5)
+
+    # 2. Verifica se o "pai" dessa thread é o troca-de-itens
+    if ctx.channel.parent_id != ID_FORUM_TROCA:
+        return await ctx.send("❌ Este comando só pode ser utilizado no Fórum de Trocas de Itens.", delete_after=5)
+
+    # Verificações de permissão (dono do post ou staff)
+    is_owner = ctx.author.id == ctx.channel.owner_id
+    is_staff = any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator
+
+    if is_owner or is_staff:
+        await ctx.send("✅ **Troca finalizada.** O tópico será trancado e arquivado em 5 segundos...")
+        
+        import asyncio
+        await asyncio.sleep(5)
+        
+        try:
+            # Fecha (impede novas mensagens) e arquiva (tira da lista de ativos)
+            await ctx.channel.edit(locked=True, archived=True, reason=f"Finalizado por {ctx.author.name}")
+            
+            # Registro no canal de Logs
+            await enviar_log(ctx, f"🔒 **Tópico Encerrado**\nPost: `{ctx.channel.name}`\nPor: {ctx.author.mention}", 0x7f8c8d)
+        except Exception as e:
+            print(f"Erro ao fechar tópico: {e}")
+    else:
+        await ctx.send("❌ Apenas o dono do post ou a staff podem finalizar esta troca.", delete_after=5)
+
+@bot.command()
 @commands.cooldown(1, 7200, commands.BucketType.user)
 @ignora_cooldown_staff()
 async def neg(ctx, membro: discord.Member):
     if membro.id == ctx.author.id or membro.bot:
         ctx.command.reset_cooldown(ctx)
-        return await ctx.send("❌ Alvo inválido.")
+        return await ctx.send("❌ Comando inválido.")
     nova = alterar_rep(membro.id, -1)
     await ctx.send(f"💢 {ctx.author.mention} deu -1 rep para {membro.mention}!")
     await enviar_log(ctx, f"💢 **Reputação Negativa**\nPara: {membro.mention}\nTotal: `{nova}`", 0xe74c3c)
@@ -258,6 +320,47 @@ async def setrep(ctx, membro: discord.Member, valor: int):
     nova = alterar_rep(membro.id, valor, definir=True)
     await ctx.send(f"✅ Rep de {membro.mention} definida para `{valor}`.")
     await verificar_cargos_nivel(ctx, membro, nova)
+
+@bot.command()
+@eh_staff()
+async def resetar(ctx, membro: discord.Member):
+    """Reseta a reputação de um membro para 0."""
+    nova = alterar_rep(membro.id, 0, definir=True)
+    await ctx.send(f"♻️ A reputação de {membro.mention} foi resetada para 0.")
+    await enviar_log(ctx, f"♻️ **Reset de Reputação**\nAlvo: {membro.mention}", 0x95a5a6)
+    await verificar_cargos_nivel(ctx, membro, nova)
+
+@bot.command()
+@eh_staff()
+async def say(ctx, canal: discord.TextChannel = None, *, mensagem: str = None):
+    """
+    Faz o bot falar.
+    Uso: !say Mensagem (no canal atual)
+    Uso: !say #canal Mensagem (em outro canal)
+    """
+    # Se o primeiro argumento não for um canal, o 'canal' será None e o texto cairá na 'mensagem'
+    # Mas o discord.py é inteligente: se você não marcar um canal, ele tenta ler a mensagem.
+    
+    # Se o usuário não digitar mensagem nenhuma
+    if mensagem is None and isinstance(canal, str):
+        mensagem = canal
+        target_channel = ctx.channel
+    elif mensagem is None:
+        return await ctx.send("❌ Você precisa digitar uma mensagem!", delete_after=5)
+    else:
+        target_channel = canal or ctx.channel
+
+    try:
+        # Apaga o comando original para manter a limpeza
+        await ctx.message.delete()
+    except:
+        pass
+
+    # Envia a mensagem
+    await target_channel.send(mensagem)
+    
+    # Log de segurança
+    await enviar_log(ctx, f"📢 **Comando !say**\n**Canal:** {target_channel.mention}\n**Conteúdo:** {mensagem}", 0x9b59b6)
 
 @bot.event
 async def on_command_error(ctx, error):
