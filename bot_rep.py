@@ -162,9 +162,9 @@ async def on_thread_create(thread):
             description=(
                 f"Olá {thread.owner.mention}, bem-vindo ao sistema de trocas!\n\n"
                 "**Dicas de Segurança:**\n"
-                "1. Verifique sempre o `!perfil` do raider antes fazer a trocar.\n"
+                "1. Verifique a reputação de alguém usando o comando `!perfil @membro` antes fazer uma troca.\n"
                 "2. Use o comando `!rep @membro` apenas após a troca ser concluída com sucesso.\n"
-                "3. Para finalizar sua troca e fecharmos seu tópico, utilize o comando `!finalizar`.\n"
+                "3. Use o comando `!finalizar` para finalizar sua troca e fecharmos seu tópico.\n"
                 "4. Se por acaso for scammado, abra um ticket acionando nossos **mods** imediatamente e use o comando `!neg @membro` para negativar o raider.\n"
             ),
             color=discord.Color.blue()
