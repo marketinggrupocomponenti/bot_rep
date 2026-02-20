@@ -196,7 +196,7 @@ async def ajuda(ctx):
     if any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator:
         embed.add_field(name="🛠️ Staff", value="`!setrep`, `!resetar`, `!say`", inline=False)
     
-    embed.set_footer(text="Desenvolvido por fugazzeto para ARC Raiders Brasil.")
+    embed.set_footer(text="Desenvolvido por fugazzeto para ARC Raiders Brasil. Sponsor: !Gio")
     await ctx.send(embed=embed)
 
 @bot.command()
