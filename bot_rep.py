@@ -249,39 +249,44 @@ async def rep(ctx, membro: discord.Member):
 
 @bot.command()
 async def finalizar(ctx):
-    """Fecha e arquiva o tópico, apenas se estiver dentro do Fórum de Trocas."""
+    """Exclui permanentemente o tópico do fórum de trocas."""
     
     # ID do teu fórum de trocas
-    ID_FORUM_TROCA = 1434310955004592360
+    ID_FORUM_TROCA = 1434310955004592360 
 
-    # 1. Verifica se o canal atual é uma thread (post)
+    # 1. Verifica se o canal atual é uma Thread (post de fórum)
     if not isinstance(ctx.channel, discord.Thread):
-        return await ctx.send("❌ Este comando só funciona dentro de tópicos do fórum.", delete_after=5)
+        return await ctx.send("❌ Este comando só funciona dentro do fórum trocas-de-itens.", delete_after=5)
 
-    # 2. Verifica se o "pai" dessa thread é o troca-de-itens
+    # 2. Verifica se o "pai" dessa thread é o Fórum de Trocas
     if ctx.channel.parent_id != ID_FORUM_TROCA:
-        return await ctx.send("❌ Este comando só pode ser utilizado no Fórum de Trocas de Itens.", delete_after=5)
+        return await ctx.send("❌ Este comando só pode ser utilizado no fórum de trocas.", delete_after=5)
 
-    # Verificações de permissão (dono do post ou staff)
+    # Verificações de permissão (Dono do post ou Staff)
     is_owner = ctx.author.id == ctx.channel.owner_id
     is_staff = any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator
 
     if is_owner or is_staff:
-        await ctx.send("✅ **Troca finalizada.** O tópico será trancado e arquivado em 5 segundos...")
+        # Aviso antes de deletar (já que a exclusão é irreversível)
+        await ctx.send("⚠️ **Troca finalizada.** Este tópico será **EXCLUÍDO** permanentemente em 5 segundos..")
         
         import asyncio
         await asyncio.sleep(5)
         
         try:
-            # Fecha (impede novas mensagens) e arquiva (tira da lista de ativos)
-            await ctx.channel.edit(locked=True, archived=True, reason=f"Finalizado por {ctx.author.name}")
+            nome_topico = ctx.channel.name # Guarda o nome para o log antes de apagar
             
-            # Registro no canal de Logs
-            await enviar_log(ctx, f"🔒 **Tópico Encerrado**\nPost: `{ctx.channel.name}`\nPor: {ctx.author.mention}", 0x7f8c8d)
+            # Registro no canal de Logs ANTES de deletar para não perder a referência
+            await enviar_log(ctx, f"🗑️ **Tópico Excluído**\nPost: `{nome_topico}`\nExecutor: {ctx.author.mention}", 0xe74c3c)
+            
+            # Exclui o tópico permanentemente
+            await ctx.channel.delete(reason=f"Finalizado por {ctx.author.name}")
+            
         except Exception as e:
-            print(f"Erro ao fechar tópico: {e}")
+            print(f"Erro ao excluir tópico: {e}")
+            await ctx.send("❌ Ocorreu um erro ao tentar excluir o tópico.")
     else:
-        await ctx.send("❌ Apenas o dono do post ou a staff podem finalizar esta troca.", delete_after=5)
+        await ctx.send("❌ Apenas o dono do post ou a staff podem finalizar e excluir esta troca.", delete_after=5)
 
 @bot.command()
 @commands.cooldown(1, 7200, commands.BucketType.user)
