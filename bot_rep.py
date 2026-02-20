@@ -165,8 +165,8 @@ async def on_thread_create(thread):
                 "1. Verifique a reputação de alguém usando o comando `!perfil @membro` antes fazer uma troca.\n"
                 "2. Use o comando `!rep @membro` apenas após a troca ser concluída com sucesso.\n"
                 "3. Use o comando `!finalizar` para finalizar sua troca e fecharmos seu tópico.\n"
-                "4. Se por acaso for scammado, abra um ticket acionando nossos **mods** imediatamente e use o comando `!neg @membro` para negativar o raider.\n"
-                "*RMT: Compra e venda de itens com dinheiro real é PROIBIDO e passivo de banimento aqui e no jogo, cuida.*"
+                "4. Se por acaso for scammado, abra um ticket acionando nossos mods imediatamente e use o comando `!neg @membro` para negativar o raider.\n"
+                "***RMT: Compra e venda de itens com dinheiro real é PROIBIDO e passivo de banimento aqui e no jogo, cuida.***"
             ),
             color=discord.Color.blue()
         )
