@@ -162,10 +162,10 @@ async def on_thread_create(thread):
     # Usamos o ID do pai ou tentamos buscar o ID se o objeto estiver incompleto
     parent_id = getattr(thread, "parent_id", None)
 
-    # Verifica se a thread (post) foi criada dentro do canal de fórum correto
-    if thread.parent_id == ID_FORUM_TROCA:
-        # Mensagem que o bot enviará assim que o post for aberto
-        embed = discord.Embed(
+    if parent_id == ID_FORUM_TROCA:
+        try:
+            # 3. Se o Bot não for o dono (para evitar loop) e for um post novo
+            embed = discord.Embed(
             title="📦 Nova Troca Iniciada!",
             description=(
                 f"Olá {thread.owner.mention}, bem-vindo ao sistema de trocas!\n\n"
@@ -177,11 +177,14 @@ async def on_thread_create(thread):
                 "***RMT: Compra e venda de itens com dinheiro real é PROIBIDO e passivo de banimento aqui e no jogo, cuida.***\n"
             ),
             color=discord.Color.blue()
-        )
-        embed.set_footer(text="ARC Raiders Brasil - Sistema de Troca e Reputação")
-        
-        # Envia a mensagem no tópico recém-criado
-        await thread.send(embed=embed)    
+            )
+            embed.set_footer(text="ARC Raiders Brasil - Sistema de Troca e Reputação")
+            
+            await thread.send(embed=embed)
+            print(f"✅ Mensagem de boas-vindas enviada no tópico: {thread.name}")
+            
+        except Exception as e:
+            print(f"❌ Erro ao enviar boas-vindas no tópico {thread.id}: {e}")
 
 # --- COMANDOS ---
 @bot.command()
