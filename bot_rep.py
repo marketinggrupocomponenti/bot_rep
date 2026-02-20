@@ -152,7 +152,15 @@ async def on_ready():
 @bot.event
 async def on_thread_create(thread):
     # ID do teu fórum de trocas
-    ID_FORUM_TROCA = 1434310955004592360 
+    ID_FORUM_TROCA = 1434310955004592360
+
+    # 1. Pequeno delay para garantir que a thread está estável
+    import asyncio
+    await asyncio.sleep(2)
+
+    # 2. Verifica se o pai da thread é o fórum correto
+    # Usamos o ID do pai ou tentamos buscar o ID se o objeto estiver incompleto
+    parent_id = getattr(thread, "parent_id", None)
 
     # Verifica se a thread (post) foi criada dentro do canal de fórum correto
     if thread.parent_id == ID_FORUM_TROCA:
