@@ -209,52 +209,65 @@ class RaidView(discord.ui.View):
 
     @discord.ui.button(label="Entrar no Squad", style=discord.ButtonStyle.green, emoji="✋")
     async def entrar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # 1. Bloqueia se já estiver no squad
-        if interaction.user in self.participantes:
-            # Se o HOST clicar de novo, ele pode querer ver os links das salas
-            if interaction.user.id == self.host.id and len(self.participantes) >= self.vagas_totais:
+        
+        # 1. SE O SQUAD JÁ ESTIVER CHEIO
+        if len(self.participantes) >= self.vagas_totais:
+            # Se quem clicou for o LÍDER, mostra as salas
+            if interaction.user.id == self.host.id:
                 view_voz = VoiceSelectionView(interaction.guild.id)
                 return await interaction.response.send_message(
-                    content=f"🎮 **Sua Raid está pronta!**\nEscolha uma sala, copie o link e envie para o squad:\n{', '.join([m.mention for m in self.participantes if m.id != self.host.id])}",
-                    view=view_voz, ephemeral=True
+                    content=(
+                        f"🎮 **Sua Raid de {self.mapa.upper()} está pronta!**\n\n"
+                        "**Como convidar seu squad:**\n"
+                        "1. Escolha uma sala abaixo.\n"
+                        "2. Clique com o botão direito nela e selecione **'Copiar Link'**.\n"
+                        "3. Cole o link aqui no canal para seus parceiros entrarem."
+                    ),
+                    view=view_voz, 
+                    ephemeral=True
                 )
-            return await interaction.response.send_message("❌ Você já está neste squad!", ephemeral=True)
-        
-        # 2. Verifica se já lotou
-        if len(self.participantes) >= self.vagas_totais:
-            return await interaction.response.send_message("❌ Este squad já está cheio!", ephemeral=True)
+            # Se for outra pessoa, apenas avisa que lotou
+            else:
+                return await interaction.response.send_message("❌ Este squad já está completo!", ephemeral=True)
 
+        # 2. SE AINDA NÃO LOTOU, MAS O USUÁRIO JÁ ESTÁ DENTRO
+        if interaction.user in self.participantes:
+            return await interaction.response.send_message("❌ Você já está neste squad!", ephemeral=True)
+
+        # 3. ADICIONA O PARTICIPANTE
         self.participantes.append(interaction.user)
         
-        # Atualiza o Embed
+        # Atualiza o Embed visual
         embed = interaction.message.embeds[0]
-        lista = "\n".join([m.mention for m in self.participantes])
-        embed.set_field_at(1, name=f"Membros ({len(self.participantes)}/{self.vagas_totais})", value=lista, inline=False)
+        lista_mentions = "\n".join([m.mention for m in self.participantes])
+        embed.set_field_at(1, name=f"Membros ({len(self.participantes)}/{self.vagas_totais})", value=lista_mentions, inline=False)
 
-        # 3. Se completar o squad com este clique
+        # 4. CHECAGEM SE LOTOU NESTE CLIQUE
         if len(self.participantes) >= self.vagas_totais:
-            button.disabled, button.label, button.style = True, "Squad Completo", discord.ButtonStyle.secondary
+            # IMPORTANTE: Não desativamos o botão para o Líder poder clicar depois!
+            button.label = "Squad Completo (Clique p/ Salas)"
+            button.style = discord.ButtonStyle.secondary
             embed.color = discord.Color.gold()
+            
             await interaction.message.edit(embed=embed, view=self)
 
-            # MENSAGEM PARA O CRIADOR (Somente se ele foi o último a clicar)
+            # Se o próprio líder foi o último a entrar, já mostra pra ele
             if interaction.user.id == self.host.id:
                 view_voz = VoiceSelectionView(interaction.guild.id)
                 await interaction.response.send_message(
-                    content=f"✅ **Squad Lotado!**\n\nEscolha uma sala abaixo, copie o link e envie para seus parceiros:\n"
-                            f"Instrução: Clique com o botão direito na sala -> Copiar Link -> Cole aqui no canal.",
-                    view=view_voz, ephemeral=True
+                    content="✅ **Squad Completo!** Escolha a sala abaixo e envie o link para os membros.",
+                    view=view_voz, 
+                    ephemeral=True
                 )
             else:
-                # Se OUTRA pessoa completou, o bot avisa ela e deixa um aviso para o líder clicar
                 await interaction.response.send_message(
-                    content=f"✅ Você completou o squad! {self.host.mention}, clique no botão 'Squad Completo' para ver as salas.", 
+                    f"✅ Você completou o squad! {self.host.mention}, clique no botão agora para pegar o link das salas.", 
                     ephemeral=True
                 )
         else:
-            # Apenas atualiza o card se não encheu
+            # Se ainda faltam vagas
             await interaction.message.edit(embed=embed, view=self)
-            await interaction.response.send_message(f"✅ Você entrou!", ephemeral=True)
+            await interaction.response.send_message(f"✅ Você entrou no squad!", ephemeral=True)
 
 # --- 2. O COMANDO ---
 @bot.command()
