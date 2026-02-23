@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
+import io # Adiciona isto no topo do ficheiro, junto aos outros imports
 
 # --- CONFIGURAÇÕES ---
 def carregar_config():
@@ -51,6 +52,13 @@ def setup_db():
     if conn:
         cursor = conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS usuarios (id BIGINT PRIMARY KEY, rep INTEGER DEFAULT 0, ultima_rep TIMESTAMP)''')
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS blacklist (
+        user_id BIGINT PRIMARY KEY,
+        motivo TEXT,
+        staff_id BIGINT,
+        data_blacklist TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
         conn.commit()
         cursor.close()
         conn.close()
@@ -157,6 +165,17 @@ async def on_thread_create(thread):
     # 1. Pequeno delay para garantir que a thread está estável
     import asyncio
     await asyncio.sleep(2)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT motivo FROM blacklist WHERE user_id = %s', (thread.owner_id,))
+    blacklisted = cursor.fetchone()
+    conn.close()
+
+    if blacklisted:
+        await thread.send(f"🚨 **ALERTA DE SEGURANÇA** 🚨\n{thread.owner.mention}, você está na **LISTA NEGRA** deste servidor e não tem permissão para realizar trocas.\n**Motivo:** {blacklisted[0]}")
+        # Opcional: Trancar o tópico na hora
+        await thread.edit(locked=True, archived=True)
+        return
 
     # 2. Verifica se o pai da thread é o fórum correto
     # Usamos o ID do pai ou tentamos buscar o ID se o objeto estiver incompleto
@@ -178,7 +197,7 @@ async def on_thread_create(thread):
             ),
             color=discord.Color.blue()
             )
-            embed.set_footer(text="ARC Raiders Brasil - Sistema de Troca e Reputação")
+            embed.set_footer(text="ARC Raiders Brasil - Sistema de Trocas e Reputação")
             
             await thread.send(embed=embed)
             print(f"✅ Mensagem de boas-vindas enviada no tópico: {thread.name}")
@@ -193,13 +212,13 @@ async def ajuda(ctx):
     embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação.", inline=True)
     embed.add_field(name="💢 `!neg @membro`", value="Dá -1 de reputação.", inline=True)
     embed.add_field(name="👤 `!perfil @membro`", value="Ver reputação.", inline=True)
-    embed.add_field(name="✅ `!finalizar`", value="Finaliza e fecha uma troca.", inline=True)
+    embed.add_field(name="✅ `!finalizar`", value="Finaliza uma troca e fecha o tópico.", inline=True)
     embed.add_field(name="🏆 `!top`", value="Ver o ranking dos 10 melhores trocadores.", inline=True)
     
     if any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator:
         embed.add_field(name="🛠️ Staff", value="`!setrep`, `!resetar`, `!say`", inline=False)
     
-    embed.set_footer(text="Desenvolvido por fugazzeto para ARC Raiders Brasil. Sponsor: !Gio")
+    embed.set_footer(text="Developer: fugazzeto | Sponsor: ! Gio | ARC Raiders Brasil")
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -316,18 +335,32 @@ async def perfil(ctx, membro: discord.Member = None):
     membro = membro or ctx.author
     conn = get_db_connection()
     cursor = conn.cursor()
+    
+    # Busca Reputação
     cursor.execute('SELECT rep FROM usuarios WHERE id = %s', (membro.id,))
-    res = cursor.fetchone()
-    pontos = res[0] if res else 0
+    res_rep = cursor.fetchone()
+    pontos = res_rep[0] if res_rep else 0
+    
+    # Busca se está na Blacklist
+    cursor.execute('SELECT motivo FROM blacklist WHERE user_id = %s', (membro.id,))
+    res_black = cursor.fetchone()
     conn.close()
-    status = "Neutro"
-    if pontos >= 100: status = "Trocador Oficial 💎"
-    elif pontos >= 50: status = "Trocador Confiável ✅"
-    elif pontos >= 10: status = "Trocador Iniciante ✅"
-    elif pontos <= -10: status = "Trocador Perigoso ❌"
-    embed = discord.Embed(title=f"Perfil de {membro.name}", color=discord.Color.gold())
-    embed.add_field(name="Pontos", value=f"`{pontos}`", inline=True)
-    embed.add_field(name="Status", value=status, inline=True)
+    
+    if res_black:
+        embed = discord.Embed(title=f"⚠️ PERFIL DE RISCO: {membro.name} ⚠️", color=0xff0000)
+        embed.description = f"🚨 **ESTE USUÁRIO ESTÁ NA LISTA NEGRA!**\n**Motivo:** {res_black[0]}"
+        embed.add_field(name="Reputação", value="BLOQUEADA", inline=True)
+    else:
+        status = "Neutro"
+        if pontos >= 100: status = "Trocador Oficial 💎"
+        elif pontos >= 50: status = "Trocador Confiável ✅"
+        elif pontos >= 10: status = "Trocador Iniciante ✅"
+        elif pontos <= -10: status = "Trocador Perigoso ❌"
+
+        embed = discord.Embed(title=f"Perfil de {membro.name}", color=0x2ecc71)
+        embed.add_field(name="Pontos de Reputação", value=f"`{pontos}`", inline=True)
+        embed.add_field(name="Status", value=status, inline=True)
+    
     embed.set_thumbnail(url=membro.display_avatar.url)
     await ctx.send(embed=embed)
 
@@ -349,35 +382,133 @@ async def resetar(ctx, membro: discord.Member):
 
 @bot.command()
 @eh_staff()
-async def say(ctx, canal: discord.TextChannel = None, *, mensagem: str = None):
+async def say(ctx, canal_ou_msg=None, *, mensagem: str = None):
     """
     Faz o bot falar.
     Uso: !say Mensagem (no canal atual)
     Uso: !say #canal Mensagem (em outro canal)
     """
-    # Se o primeiro argumento não for um canal, o 'canal' será None e o texto cairá na 'mensagem'
-    # Mas o discord.py é inteligente: se você não marcar um canal, ele tenta ler a mensagem.
+    # 1. Caso: !say #canal Mensagem
+    # O discord.py converte menções de canal automaticamente se usarmos Union ou checagem manual
+    if canal_ou_msg and canal_ou_msg.startswith('<#'):
+        try:
+            target_channel = await commands.TextChannelConverter().convert(ctx, canal_ou_msg)
+            msg_final = mensagem
+        except:
+            target_channel = ctx.channel
+            msg_final = f"{canal_ou_msg} {mensagem or ''}"
     
-    # Se o usuário não digitar mensagem nenhuma
-    if mensagem is None and isinstance(canal, str):
-        mensagem = canal
-        target_channel = ctx.channel
-    elif mensagem is None:
-        return await ctx.send("❌ Você precisa digitar uma mensagem!", delete_after=5)
+    # 2. Caso: !say Mensagem (no canal atual)
     else:
-        target_channel = canal or ctx.channel
+        target_channel = ctx.channel
+        # Junta o primeiro argumento com o resto da mensagem
+        msg_final = f"{canal_ou_msg} {mensagem or ''}".strip()
+
+    if not msg_final or msg_final == "None":
+        return await ctx.send("❌ Você precisa digitar uma mensagem!", delete_after=5)
 
     try:
-        # Apaga o comando original para manter a limpeza
         await ctx.message.delete()
     except:
         pass
 
-    # Envia a mensagem
-    await target_channel.send(mensagem)
+    await target_channel.send(msg_final)
+    await enviar_log(ctx, f"📢 **Comando !say**\n**Canal:** {target_channel.mention}\n**Conteúdo:** {msg_final}", 0x9b59b6)
+
+@bot.command()
+@eh_staff()
+async def denunciar(ctx, membro: discord.Member, *, motivo: str):
+    """Adiciona um usuário à lista negra de trocas."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
     
-    # Log de segurança
-    await enviar_log(ctx, f"📢 **Comando !say**\n**Canal:** {target_channel.mention}\n**Conteúdo:** {mensagem}", 0x9b59b6)
+    try:
+        cursor.execute('''
+            INSERT INTO blacklist (user_id, motivo, staff_id) 
+            VALUES (%s, %s, %s) 
+            ON CONFLICT (user_id) DO UPDATE SET motivo = EXCLUDED.motivo
+        ''', (membro.id, motivo, ctx.author.id))
+        conn.commit()
+        
+        # Opcional: Remover todos os pontos de rep do scammer
+        alterar_rep(membro.id, -999, definir=True)
+        
+        embed = discord.Embed(title="🚫 Usuário Banido das Trocas", color=0xff0000)
+        embed.add_field(name="Membro", value=membro.mention, inline=True)
+        embed.add_field(name="Motivo", value=motivo, inline=True)
+        embed.set_footer(text="Este usuário foi marcado como PERIGOSO.")
+        
+        await ctx.send(embed=embed)
+        await enviar_log(ctx, f"🚫 **BLACK-LIST**\nAlvo: {membro.mention}\nMotivo: {motivo}", 0xff0000)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Erro ao processar denúncia: {e}")
+    finally:
+        conn.close()
+
+@bot.command()
+@eh_staff()
+async def perdoar(ctx, membro: discord.Member):
+    """Remove um usuário da lista negra."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM blacklist WHERE user_id = %s', (membro.id,))
+    conn.commit()
+    conn.close()
+    
+    await ctx.send(f"✅ {membro.mention} foi removido da lista negra.")
+    await enviar_log(ctx, f"🛡️ **PERDÃO**\nAlvo: {membro.mention} removido da blacklist.", 0x2ecc71)
+
+@bot.command()
+@eh_staff()
+async def backup(ctx):
+    """Gera um ficheiro de texto com toda a base de dados de reputação."""
+    await ctx.send("📂 A gerar backup da base de dados... Por favor, aguarda.")
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 1. Backup de Reputação
+        cursor.execute('SELECT id, rep FROM usuarios ORDER BY rep DESC')
+        usuarios = cursor.fetchall()
+        
+        # 2. Backup de Blacklist
+        cursor.execute('SELECT user_id, motivo FROM blacklist')
+        blacklisted = cursor.fetchall()
+        
+        conn.close()
+
+        # Criar o conteúdo do ficheiro em memória
+        buffer = io.StringIO()
+        buffer.write(f"--- BACKUP REPUTAÇÃO ARC RAIDERS BRASIL ({datetime.now().strftime('%d/%m/%Y %H:%M')}) ---\n\n")
+        
+        buffer.write("🌟 RANKING DE REPUTAÇÃO:\n")
+        for uid, pts in usuarios:
+            user = bot.get_user(uid)
+            nome = user.name if user else f"Desconhecido({uid})"
+            buffer.write(f"ID: {uid} | Nome: {nome} | Pontos: {pts}\n")
+            
+        buffer.write("\n" + "="*50 + "\n\n")
+        
+        buffer.write("🚫 LISTA NEGRA (BLACKLIST):\n")
+        if not blacklisted:
+            buffer.write("Nenhum utilizador na lista negra.\n")
+        for uid, motivo in blacklisted:
+            user = bot.get_user(uid)
+            nome = user.name if user else f"Desconhecido({uid})"
+            buffer.write(f"ID: {uid} | Nome: {nome} | Motivo: {motivo}\n")
+
+        buffer.seek(0)
+        
+        # Enviar como ficheiro
+        file = discord.File(fp=buffer, filename=f"backup_rep_{datetime.now().strftime('%d_%m_%Y')}.txt")
+        await ctx.send(content="✅ Aqui está o backup completo do sistema:", file=file)
+        
+        await enviar_log(ctx, "📂 **Backup do Sistema** realizado com sucesso.", 0x9b59b6)
+
+    except Exception as e:
+        await ctx.send(f"❌ Erro ao gerar backup: {e}")
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -388,6 +519,25 @@ async def on_command_error(ctx, error):
         # Opcional: Avisar que o canal está errado
         if not ctx.author.guild_permissions.administrator:
              await ctx.send(f"❌ {ctx.author.mention}, este comando não pode ser usado aqui.", delete_after=7)
+
+from discord.ext import tasks
+
+@tasks.loop(minutes=10)
+async def manter_banco_vivo():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1") # Uma query simples só para manter o túnel ativo
+        conn.close()
+        print("ping no banco: OK")
+    except Exception as e:
+        print(f"Erro no ping do banco: {e}")
+
+@bot.event
+async def on_ready():
+    setup_db()
+    manter_banco_vivo.start() # Inicia o loop quando o bot liga
+    print(f"✅ {bot.user.name} Online e Banco Protegido")
 
 if __name__ == "__main__":
     setup_db()
