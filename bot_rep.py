@@ -162,6 +162,21 @@ async def manter_banco_vivo():
             print("ping no banco: OK")
     except Exception as e: print(f"Erro ping banco: {e}")
 
+@bot.event
+async def on_ready():
+    setup_db()
+    
+    # Inicia os loops apenas se não estiverem rodando
+    if not monitorar_eventos.is_running():
+        monitorar_eventos.start()
+        
+    if not manter_banco_vivo.is_running():
+        manter_banco_vivo.start()
+        
+    print(f"✅ {bot.user.name} está ONLINE!")
+    print(f"📡 Monitorando eventos em: {ID_CANAL_NOTICIAS}")
+    await bot.change_presence(activity=discord.Game(name="!ajuda | ARC Raiders Brasil"))
+
 # --- SISTEMA DE CARGOS ---
 async def verificar_cargos_nivel(ctx, membro, pontos):
     niveis = [{"limite": 100, "nome": "trocador oficial"}, {"limite": 50, "nome": "trocador confiavel"}, {"limite": 10, "nome": "trocador iniciante"}]
@@ -239,16 +254,9 @@ async def raid(ctx, mapa: str = None, vagas: int = None):
 @bot.event
 async def on_ready():
     setup_db()
-    
-    # Inicia os loops apenas se não estiverem rodando
-    if not monitorar_eventos.is_running():
-        monitorar_eventos.start()
-        
-    if not manter_banco_vivo.is_running():
-        manter_banco_vivo.start()
-        
-    print(f"✅ {bot.user.name} está ONLINE!")
-    print(f"📡 Monitorando eventos em: {ID_CANAL_NOTICIAS}")
+    if not monitorar_eventos.is_running(): monitorar_eventos.start()
+    if not manter_banco_vivo.is_running(): manter_banco_vivo.start()
+    print(f"✅ {bot.user.name} ONLINE")
     await bot.change_presence(activity=discord.Game(name="!ajuda | ARC Raiders Brasil"))
 
 @bot.event
@@ -257,6 +265,7 @@ async def on_thread_create(thread):
     ID_FORUM_TROCA = 1434310955004592360
 
     # 1. Pequeno delay para garantir que a thread está estável
+    import asyncio
     await asyncio.sleep(2)
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -395,6 +404,7 @@ async def finalizar(ctx):
         # Aviso antes de deletar (já que a exclusão é irreversível)
         await ctx.send("⚠️ **Troca finalizada.** Este tópico será **EXCLUÍDO** permanentemente em 5 segundos..")
         
+        import asyncio
         await asyncio.sleep(5)
         
         try:
@@ -626,6 +636,12 @@ async def manter_banco_vivo():
         print("ping no banco: OK")
     except Exception as e:
         print(f"Erro no ping do banco: {e}")
+
+@bot.event
+async def on_ready():
+    setup_db()
+    manter_banco_vivo.start() # Inicia o loop quando o bot liga
+    print(f"✅ {bot.user.name} Online e Banco Protegido")
 
 if __name__ == "__main__":
     setup_db()
