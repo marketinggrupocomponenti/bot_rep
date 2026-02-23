@@ -216,7 +216,7 @@ async def ajuda(ctx):
     embed.add_field(name="🏆 `!top`", value="Ver o ranking dos 10 melhores trocadores.", inline=True)
     
     if any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator:
-        embed.add_field(name="🛠️ Staff", value="`!setrep`, `!resetar`, `!say`", inline=False)
+        embed.add_field(name="🛠️ Staff", value="`!setrep`, `!resetar`, `!say`, `!backup`, `!denunciar`, `!perdoar`", inline=False)
     
     embed.set_footer(text="Developer: fugazzeto | Sponsor: ! Gio | ARC Raiders Brasil")
     await ctx.send(embed=embed)
@@ -463,7 +463,7 @@ async def perdoar(ctx, membro: discord.Member):
 @eh_staff()
 async def backup(ctx):
     """Gera um ficheiro de texto com toda a base de dados de reputação."""
-    await ctx.send("📂 A gerar backup da base de dados... Por favor, aguarda.")
+    await ctx.send("📂 A gerar backup da base de dados... Por favor, aguardue.")
     
     try:
         conn = get_db_connection()
@@ -493,7 +493,7 @@ async def backup(ctx):
         
         buffer.write("🚫 LISTA NEGRA (BLACKLIST):\n")
         if not blacklisted:
-            buffer.write("Nenhum utilizador na lista negra.\n")
+            buffer.write("Nenhum raider na lista negra.\n")
         for uid, motivo in blacklisted:
             user = bot.get_user(uid)
             nome = user.name if user else f"Desconhecido({uid})"
