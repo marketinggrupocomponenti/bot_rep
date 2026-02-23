@@ -337,11 +337,10 @@ async def on_thread_create(thread):
     # Usamos o ID do pai ou tentamos buscar o ID se o objeto estiver incompleto
     parent_id = getattr(thread, "parent_id", None)
 
-    if parent_id == ID_FORUM_TROCA:
+    if thread.parent_id == ID_FORUM_TROCA:
         try:
-            # 3. Se o Bot não for o dono (para evitar loop) e for um post novo
             embed = discord.Embed(
-            title="📦 Nova Troca Iniciada!",
+                title="📦 Nova Troca Iniciada!",
             description=(
                 f"Olá {thread.owner.mention}, bem-vindo ao sistema de trocas!\n\n"
                 "**Dicas de Segurança:**\n"
@@ -354,10 +353,9 @@ async def on_thread_create(thread):
             color=discord.Color.blue()
             )
             embed.set_footer(text="ARC Raiders Brasil - Sistema de Trocas e Reputação")
-            
-            await thread.send(embed=embed)
+            view = FinalizarTrocaView() 
+            await thread.send(embed=embed, view=view)
             print(f"✅ Mensagem de boas-vindas enviada no tópico: {thread.name}")
-            
         except Exception as e:
             print(f"❌ Erro ao enviar boas-vindas no tópico {thread.id}: {e}")
 
@@ -536,6 +534,16 @@ async def resetar(ctx, membro: discord.Member):
     await ctx.send(f"♻️ A reputação de {membro.mention} foi resetada para 0.")
     await enviar_log(ctx, f"♻️ **Reset de Reputação**\nAlvo: {membro.mention}", 0x95a5a6)
     await verificar_cargos_nivel(ctx, membro, nova)
+
+@bot.command()
+@eh_staff()
+async def colocar_botao(ctx):
+    """Comando manual para colocar o botão em um tópico existente"""
+    if isinstance(ctx.channel, discord.Thread):
+        view = FinalizarTrocaView()
+        await ctx.send("Clique abaixo para finalizar esta troca:", view=view)
+    else:
+        await ctx.send("Este comando só funciona dentro de um tópico!")
 
 @bot.command()
 @eh_staff()
