@@ -41,11 +41,6 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-intents = discord.Intents.default()
-intents.message_content = True  # OBRIGATÓRIO para ler "!raid"
-intents.members = True          # OBRIGATÓRIO para identificar membros
-bot = commands.Bot(command_prefix="!", intents=intents)
-
 # --- BANCO DE DADOS ---
 def get_db_connection():
     if not DATABASE_URL: return None
@@ -102,22 +97,25 @@ async def verificar_canal(ctx):
     # IDs das suas configurações
     ID_FORUM_TROCA = 1434310955004592360
     ID_CANAL_STAFF = 1412423356946317350
-
-    CANAIS_VOZ_IDS = [
-    1441884973077495808, 1441885994248044605, 1441887071533928540,
-    1439303187332071594, 1439314706719445218, 1439314014579593607
-]
+    ID_CANAL_RAID = 1412423357600632922
 
     # Verificações de Identidade
     is_admin = ctx.author.guild_permissions.administrator
     is_mod = any(role.name.lower() == "mods" for role in ctx.author.roles)
     
-    # Identificar se o canal atual é uma Thread (Post de Fórum)
-    # Se for thread, o parent_id é o ID do Canal de Fórum
     parent_id = getattr(ctx.channel, "parent_id", None)
     
     no_forum_troca = (ctx.channel.id == ID_FORUM_TROCA or parent_id == ID_FORUM_TROCA)
     no_canal_staff = (ctx.channel.id == ID_CANAL_STAFF or parent_id == ID_CANAL_STAFF)
+    no_canal_raid = (ctx.channel.id == ID_CANAL_RAID)
+
+    # REGRA ATUALIZADA:
+    # 1. Staff pode usar nos canais de troca, staff ou raid.
+    if is_admin or is_mod:
+        return no_forum_troca or no_canal_staff or no_canal_raid
+    
+    # 2. Membros Comuns: Podem usar no Fórum de Trocas OU no Canal de Raid
+    return no_forum_troca or no_canal_raid
 
     # REGRA:
     # 1. Staff (Admin/Mod) pode usar no Fórum (em tópicos ou na raiz) e no canal de Staff
@@ -198,13 +196,20 @@ async def monitorar_eventos():
     except Exception as e:
         print(f"Erro ao monitorar eventos: {e}")
 
-# Inicia o loop quando o bot estiver pronto
 @bot.event
 async def on_ready():
     setup_db()
+    
+    # Inicia os loops apenas se não estiverem rodando
     if not monitorar_eventos.is_running():
         monitorar_eventos.start()
-    print(f"✅ {bot.user.name} online e monitorando eventos!")
+        
+    if not manter_banco_vivo.is_running():
+        manter_banco_vivo.start()
+        
+    print(f"✅ {bot.user.name} está ONLINE!")
+    print(f"📡 Monitorando eventos em: {ID_CANAL_NOTICIAS}")
+    await bot.change_presence(activity=discord.Game(name="!ajuda | ARC Raiders Brasil"))
 
 # --- SISTEMA DE CARGOS ---
 async def verificar_cargos_nivel(ctx, membro, pontos):
