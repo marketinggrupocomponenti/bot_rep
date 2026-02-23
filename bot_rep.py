@@ -41,6 +41,11 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+intents = discord.Intents.default()
+intents.message_content = True  # OBRIGATÓRIO para ler "!raid"
+intents.members = True          # OBRIGATÓRIO para identificar membros
+bot = commands.Bot(command_prefix="!", intents=intents)
+
 # --- BANCO DE DADOS ---
 def get_db_connection():
     if not DATABASE_URL: return None
@@ -216,14 +221,16 @@ async def verificar_cargos_nivel(ctx, membro, pontos):
             elif pontos < nivel["limite"] and cargo in membro.roles: await membro.remove_roles(cargo)
 
 # --- SISTEMA DE RAID (UI) ---
-
 class VoiceSelectionView(discord.ui.View):
-    def __init__(self, guild_id, host):
+    def __init__(self, guild_id):
         super().__init__(timeout=None)
-        self.host = host
-        for i, canal_id in enumerate(CANAIS_VOZ_IDS, 1):
+        canais_voz = [
+            1441884973077495808, 1441885994248044605, 1441887071533928540,
+            1439303187332071594, 1439314706719445218, 1439314014579593607
+        ]
+        for i, canal_id in enumerate(canais_voz, 1):
             self.add_item(discord.ui.Button(
-                label=f"Criar sala de voz {i}", 
+                label=f"Sala {i}", 
                 url=f"https://discord.com/channels/{guild_id}/{canal_id}",
                 style=discord.ButtonStyle.link
             ))
@@ -246,36 +253,57 @@ class RaidView(discord.ui.View):
 
         self.participantes.append(interaction.user)
         
+        # Atualiza o Embed
         embed = interaction.message.embeds[0]
-        lista_membros = "\n".join([f"👤 {m.mention}" for m in self.participantes])
-        embed.set_field_at(1, name=f"Membros ({len(self.participantes)}/{self.vagas_totais})", value=lista_membros, inline=False)
+        lista = "\n".join([m.mention for m in self.participantes])
+        embed.set_field_at(1, name=f"Membros ({len(self.participantes)}/{self.vagas_totais})", value=lista, inline=False)
         
         if len(self.participantes) >= self.vagas_totais:
             button.disabled = True
             button.label = "Squad Completo"
             button.style = discord.ButtonStyle.secondary
             embed.color = discord.Color.gold()
-            embed.title = f"✅ SQUAD COMPLETO: {self.mapa.upper()}"
-            
             await interaction.message.edit(embed=embed, view=self)
 
-            # Mensagem exclusiva para o Host (ou para quem fechou o squad avisando o host)
-            view_voz = VoiceSelectionView(interaction.guild.id, self.host)
+            # Envia salas apenas para o criador
+            view_voz = VoiceSelectionView(interaction.guild.id)
+            instrucao = f"🎮 **Squad Pronto!**\nEscolha uma sala e avise os membros: {', '.join([m.mention for m in self.participantes if m != self.host])}"
             
-            instrucao = (
-                f"🎮 **Squad Pronto!**\n\n"
-                f"1. Clique em uma das salas abaixo para criar sua sala de raid.\n"
-                f"2. **AVISO:** Após entrar, informe aos membros {', '.join([m.mention for m in self.participantes if m != self.host])} qual sala você escolheu ou envie o link da sala para eles!"
-            )
-
-            # Se quem fechou o squad não foi o host, o bot manda o aviso no canal para o host ver
+            # Tenta avisar o host de forma efêmera
             await interaction.response.send_message(content=instrucao, view=view_voz, ephemeral=True)
-            
-            if interaction.user != self.host:
-                await interaction.channel.send(f"🔔 {self.host.mention}, seu squad está pronto! Verifique a mensagem do sistema para escolher a sala de voz.")
         else:
             await interaction.message.edit(embed=embed, view=self)
-            await interaction.response.send_message(f"✅ Você entrou no squad de {self.host.display_name}!", ephemeral=True)
+            await interaction.response.send_message(f"✅ Você entrou no squad!", ephemeral=True)
+
+# --- 2. O COMANDO ---
+
+@bot.command()
+async def raid(ctx, mapa: str = None, vagas: int = None):
+    """Cria uma chamada de Raid. Ex: !raid Buried 2"""
+    ID_CANAL_RAID = 1412423357600632922
+
+    # Verifica se os argumentos foram passados
+    if mapa is None or vagas is None:
+        return await ctx.send("❌ **Uso incorreto!** Digite: `!raid [mapa] [vagas_extras]`\nExemplo: `!raid BuriedCity 2`")
+
+    # Restrição de Canal
+    if ctx.channel.id != ID_CANAL_RAID:
+        return await ctx.send(f"❌ Use este comando no canal <#{ID_CANAL_RAID}>.", delete_after=5)
+
+    # Limite de Duos/Trios
+    if vagas < 1 or vagas > 2:
+        return await ctx.send("❌ No ARC Raiders, escolha **1** vaga extra (Duo) ou **2** (Trio).")
+
+    try:
+        total = vagas + 1
+        embed = discord.Embed(title=f"🚨 Recrutamento: {'DUO' if total==2 else 'TRIO'}", color=0x2ecc71)
+        embed.add_field(name="📍 Mapa", value=mapa.upper(), inline=True)
+        embed.add_field(name=f"Membros (1/{total})", value=f"👤 {ctx.author.mention}", inline=False)
+        
+        await ctx.send(embed=embed, view=RaidView(ctx.author, mapa, total))
+    except Exception as e:
+        await ctx.send(f"❌ Erro interno: {e}")
+        print(f"Erro no comando raid: {e}")
 
 # --- EVENTOS ---
 @bot.event
@@ -333,22 +361,6 @@ async def on_thread_create(thread):
             print(f"❌ Erro ao enviar boas-vindas no tópico {thread.id}: {e}")
 
 # --- COMANDOS ---
-@bot.command()
-async def raid(ctx, mapa: str, vagas_extras: int):
-    """Cria uma raid para Duo (1 vaga) ou Trio (2 vagas)."""
-    if ctx.channel.id != ID_CANAL_RAID:
-        return await ctx.send(f"❌ Use este comando em <#{ID_CANAL_RAID}>", delete_after=5)
-
-    if vagas_extras < 1 or vagas_extras > 2:
-        return await ctx.send("❌ Use `!raid [mapa] 1` para Duo ou `2` para Trio.", delete_after=10)
-
-    total = vagas_extras + 1
-    embed = discord.Embed(title=f"🚨 Recrutamento: {'DUO' if total==2 else 'TRIO'}", color=discord.Color.green())
-    embed.add_field(name="📍 Mapa", value=mapa.upper(), inline=True)
-    embed.add_field(name=f"Membros (1/{total})", value=f"👤 {ctx.author.mention}", inline=False)
-    
-    await ctx.send(embed=embed, view=RaidView(ctx.author, mapa, total))
-
 @bot.command()
 async def ajuda(ctx):
     embed = discord.Embed(title="📖 Lista de Comandos", color=discord.Color.blue())
