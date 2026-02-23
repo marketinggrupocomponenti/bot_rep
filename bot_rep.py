@@ -218,22 +218,12 @@ class RaidView(discord.ui.View):
         if len(self.participantes) >= self.vagas_totais:
             button.disabled, button.label, button.style = True, "Squad Completo", discord.ButtonStyle.secondary
             embed.color = discord.Color.gold()
-            
-            # 1. Atualiza a mensagem original para todos verem que fechou
             await interaction.message.edit(embed=embed, view=self)
-            
-            # 2. Cria a view com os links das salas
             view_voz = VoiceSelectionView(interaction.guild.id)
-            
-            # 3. MENCIONA todos os participantes no canal para eles saberem qual sala escolher
-            mentions = " ".join([m.mention for m in self.participantes])
-            await interaction.channel.send(
-                content=f"🎮 **SQUAD FORMADO!**\n{mentions}\nEscolha uma das salas de voz abaixo para criar sua raid:",
-                view=view_voz
-            )
-            
-            # Responde à interação final
-            await interaction.response.send_message("✅ Squad finalizado e salas liberadas! Mande o link dela para os integrantes da raid.", ephemeral=True)
+            await interaction.response.send_message(content=f"🎮 **Squad Pronto!**", view=view_voz, ephemeral=True)
+        else:
+            await interaction.message.edit(embed=embed, view=self)
+            await interaction.response.send_message(f"✅ Você entrou!", ephemeral=True)
 
 # --- 2. O COMANDO ---
 @bot.command()
