@@ -53,13 +53,7 @@ def setup_db():
     if conn:
         cursor = conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS usuarios (id BIGINT PRIMARY KEY, rep INTEGER DEFAULT 0, ultima_rep TIMESTAMP)''')
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS blacklist (
-        user_id BIGINT PRIMARY KEY,
-        motivo TEXT,
-        staff_id BIGINT,
-        data_blacklist TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS blacklist (user_id BIGINT PRIMARY KEY, motivo TEXT, staff_id BIGINT, data_blacklist TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         conn.commit()
         cursor.close()
         conn.close()
@@ -83,9 +77,7 @@ async def enviar_log(origem, mensagem, cor=0xffa500):
     if LOG_CHANNEL_ID == 0: return
     canal = bot.get_channel(LOG_CHANNEL_ID)
     if canal:
-        # Pega o autor independente se for Interaction ou Ctx
         autor = origem.user if hasattr(origem, 'user') else origem.author
-        
         embed = discord.Embed(title="🛰️ Registro de Atividade", description=mensagem, color=cor, timestamp=datetime.now())
         embed.set_footer(text=f"Executor: {autor.name}")
         await canal.send(embed=embed)
@@ -95,19 +87,14 @@ async def enviar_log(origem, mensagem, cor=0xffa500):
 async def verificar_canal(ctx):
     if isinstance(ctx.channel, discord.DMChannel): 
         return False
-    
     is_admin = ctx.author.guild_permissions.administrator
     is_mod = any(role.name.lower() == "mods" for role in ctx.author.roles)
     parent_id = getattr(ctx.channel, "parent_id", None)
-    
     no_forum_troca = (ctx.channel.id == ID_FORUM_TROCA or parent_id == ID_FORUM_TROCA)
     no_canal_staff = (ctx.channel.id == ID_CANAL_STAFF)
     no_canal_raid = (ctx.channel.id == ID_CANAL_RAID)
-
-    # Regra unificada
     if is_admin or is_mod:
         return no_forum_troca or no_canal_staff or no_canal_raid
-    
     return no_forum_troca or no_canal_raid
 
 def eh_staff():
@@ -142,55 +129,38 @@ async def verificar_cargos_nivel(ctx, membro, pontos):
             if pontos >= nivel["limite"] and cargo not in membro.roles: await membro.add_roles(cargo)
             elif pontos < nivel["limite"] and cargo in membro.roles: await membro.remove_roles(cargo)
 
+# --- CLASSES DE INTERFACE (VIEWS) ---
 class FinalizarTrocaView(discord.ui.View):
-    def __init__(self, owner_id=None):
-        # timeout=None é essencial para persistência
+    def __init__(self):
         super().__init__(timeout=None)
-        self.owner_id = owner_id
 
-        @discord.ui.button(
+    @discord.ui.button(
         label="Finalizar e Excluir Tópico", 
         style=discord.ButtonStyle.secondary, 
         emoji="✅",
         custom_id="btn_finalizar_troca"
     )
-        async def finalizar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def finalizar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         thread = interaction.channel
-        
-        # 1. Verificações de permissão
-        thread_owner_id = thread.owner_id
-        is_owner = interaction.user.id == thread_owner_id
+        is_owner = interaction.user.id == thread.owner_id
         is_staff = any(role.name.lower() == "mods" for role in interaction.user.roles) or interaction.user.guild_permissions.administrator
 
         if not (is_owner or is_staff):
             return await interaction.response.send_message("❌ Apenas o dono do post ou a staff podem finalizar esta troca.", ephemeral=True)
 
-        # 2. Responde à interação primeiro (evita erro de 'Interaction failed')
         await interaction.response.send_message("⚠️ **Troca finalizada.** Este tópico será **EXCLUÍDO** permanentemente em 5 segundos..")
-        
         await asyncio.sleep(5)
         
         try:
             nome_topico = thread.name
-            
-            # 3. Log antes de apagar
-            # Criamos um contexto fictício para o seu sistema de log funcionar
             await enviar_log(interaction, f"🗑️ **Tópico Excluído**\nPost: `{nome_topico}`\nExecutor: {interaction.user.mention}", 0xe74c3c)
-            
-            # 4. Tenta deletar o tópico
             await thread.delete(reason=f"Finalizado por {interaction.user.name}")
-            print(f"✅ Tópico '{nome_topico}' excluído com sucesso.")
-
         except discord.Forbidden:
-            print(f"❌ ERRO: O Bot não tem permissão (discord.Forbidden) para excluir o tópico {thread.id}")
-            # Tenta avisar no canal se ainda for possível
-            try:
-                await thread.send("❌ **Erro de Permissão:** O bot precisa da permissão 'Gerenciar Tópicos' para excluir este canal.")
+            try: await thread.send("❌ **Erro:** O bot precisa da permissão 'Gerenciar Tópicos' para excluir este canal.")
             except: pass
         except Exception as e:
             print(f"❌ Erro ao excluir tópico: {e}")
 
-# --- SISTEMA DE RAID (UI) ---
 class VoiceSelectionView(discord.ui.View):
     def __init__(self, guild_id):
         super().__init__(timeout=None)
@@ -208,67 +178,43 @@ class RaidView(discord.ui.View):
 
     @discord.ui.button(label="Entrar no Squad", style=discord.ButtonStyle.green, emoji="✋")
     async def entrar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        
-        # 1. SE O SQUAD JÁ ESTIVER CHEIO
         if len(self.participantes) >= self.vagas_totais:
-            # Se quem clicou for o LÍDER, mostra as salas
             if interaction.user.id == self.host.id:
                 view_voz = VoiceSelectionView(interaction.guild.id)
-                return await interaction.response.send_message(
-                    content=(
-                        f"🎮 **Sua Raid de {self.mapa.upper()} está pronta!**\n\n"
-                        "**Como convidar seu squad:**\n"
-                        "1. Escolha uma sala abaixo.\n"
-                        "2. Clique com o botão direito nela e selecione **'Copiar Link'**.\n"
-                        "3. Cole o link aqui no canal para seus parceiros entrarem."
-                    ),
-                    view=view_voz, 
-                    ephemeral=True
-                )
-            # Se for outra pessoa, apenas avisa que lotou
+                return await interaction.response.send_message(content=f"🎮 **Sua Raid de {self.mapa.upper()} está pronta!**\n\n**Como convidar seu squad:**\n1. Escolha uma sala abaixo.\n2. Clique com o botão direito nela e selecione **'Copiar Link'**.\n3. Cole o link aqui no canal para seus parceiros entrarem.", view=view_voz, ephemeral=True)
             else:
                 return await interaction.response.send_message("❌ Este squad já está completo!", ephemeral=True)
-
-        # 2. SE AINDA NÃO LOTOU, MAS O USUÁRIO JÁ ESTÁ DENTRO
         if interaction.user in self.participantes:
             return await interaction.response.send_message("❌ Você já está neste squad!", ephemeral=True)
-
-        # 3. ADICIONA O PARTICIPANTE
         self.participantes.append(interaction.user)
-        
-        # Atualiza o Embed visual
         embed = interaction.message.embeds[0]
         lista_mentions = "\n".join([m.mention for m in self.participantes])
         embed.set_field_at(1, name=f"Membros ({len(self.participantes)}/{self.vagas_totais})", value=lista_mentions, inline=False)
-
-        # 4. CHECAGEM SE LOTOU NESTE CLIQUE
         if len(self.participantes) >= self.vagas_totais:
-            # IMPORTANTE: Não desativamos o botão para o Líder poder clicar depois!
             button.label = "Squad Completo (Clique p/ Salas)"
             button.style = discord.ButtonStyle.secondary
             embed.color = discord.Color.gold()
-            
-            await interaction.message.edit(embed=embed, view=self)
-
-            # Se o próprio líder foi o último a entrar, já mostra pra ele
-            if interaction.user.id == self.host.id:
-                view_voz = VoiceSelectionView(interaction.guild.id)
-                await interaction.response.send_message(
-                    content="✅ **Squad Completo!** Escolha a sala abaixo e envie o link para os membros.",
-                    view=view_voz, 
-                    ephemeral=True
-                )
-            else:
-                await interaction.response.send_message(
-                    f"✅ Você completou o squad! {self.host.mention}, clique no botão agora para pegar o link das salas.", 
-                    ephemeral=True
-                )
+        await interaction.message.edit(embed=embed, view=self)
+        if len(self.participantes) >= self.vagas_totais and interaction.user.id == self.host.id:
+            await interaction.response.send_message(content="✅ **Squad Completo!** Escolha a sala abaixo e envie o link.", view=VoiceSelectionView(interaction.guild.id), ephemeral=True)
         else:
-            # Se ainda faltam vagas
-            await interaction.message.edit(embed=embed, view=self)
-            await interaction.response.send_message(f"✅ Você entrou no squad!", ephemeral=True)
+            await interaction.response.send_message("✅ Você entrou no squad!", ephemeral=True)
 
-# --- 2. O COMANDO ---
+# --- COMANDOS ---
+@bot.command()
+async def ajuda(ctx):
+    embed = discord.Embed(title="📖 Lista de Comandos", color=discord.Color.blue())
+    embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação.", inline=True)
+    embed.add_field(name="💢 `!neg @membro`", value="Dá -1 de reputação.", inline=True)
+    embed.add_field(name="👤 `!perfil @membro`", value="Ver reputação.", inline=True)
+    embed.add_field(name="📡 `!raid mapa/objetivo 1`", value="Cria uma raid para duo.", inline=True)
+    embed.add_field(name="📡 `!raid mapa/objetivo 2`", value="Cria uma raid para trio.", inline=True)
+    embed.add_field(name="🏆 `!top`", value="Ver o ranking dos 10 melhores trocadores.", inline=True)
+    if any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator:
+        embed.add_field(name="🛠️ Staff", value="`!setrep`, `!resetar`, `!say`, `!backup`, `!denunciar`, `!perdoar`, `!colocar_botao` ", inline=False)
+    embed.set_footer(text="Developer: fugazzeto | Sponsor: ! Gio | ARC Raiders Brasil")
+    await ctx.send(embed=embed)
+
 @bot.command()
 async def raid(ctx, mapa: str = None, vagas: int = None):
     if mapa is None or vagas is None:
@@ -283,157 +229,23 @@ async def raid(ctx, mapa: str = None, vagas: int = None):
     embed.add_field(name=f"Membros (1/{total})", value=f"👤 {ctx.author.mention}", inline=False)
     await ctx.send(embed=embed, view=RaidView(ctx.author, mapa, total))
 
-# --- EVENTOS ---
-@bot.event
-async def on_ready():
-    setup_db()
-    print(f"✅ {bot.user.name} ONLINE")
-    await bot.change_presence(activity=discord.Game(name="!ajuda | ARC Raiders Brasil"))
-
-@bot.event
-async def on_thread_create(thread):
-    ID_FORUM_TROCA = 1434310955004592360
-    await asyncio.sleep(2)
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT motivo FROM blacklist WHERE user_id = %s', (thread.owner_id,))
-    blacklisted = cursor.fetchone()
-    conn.close()
-
-    if blacklisted:
-        await thread.send(f"🚨 **ALERTA DE SEGURANÇA** 🚨\n{thread.owner.mention}, você está na **LISTA NEGRA** e não pode trocar.\n**Motivo:** {blacklisted[0]}")
-        await thread.edit(locked=True, archived=True)
-        return
-
-    if thread.parent_id == ID_FORUM_TROCA:
-        try:
-            embed = discord.Embed(
-                title="📦 Nova Troca Iniciada!",
-                description=(
-                    f"Olá {thread.owner.mention}, bem-vindo ao sistema de trocas!\n\n"
-                    "**Dicas de Segurança:**\n"
-                    "1. Verifique a reputação usando `!perfil @membro`.\n"
-                    "2. Use `!rep @membro` após concluir a troca.\n"
-                    "3. Se for scammado, abra um ticket de suporte e use `!neg @membro`.\n\n"
-                    "**Para encerrar:** Clique no botão abaixo para excluir este tópico.\n"
-                    "**RMT: Compra ou venda por dinheiro real é PROIBIDO e passivo de banimento.**"
-                ),
-                color=discord.Color.blue()
-            )
-            embed.set_footer(text="ARC Raiders Brasil - Sistema de Trocas")
-            
-            # Adicionamos a View com o botão aqui
-            view = FinalizarTrocaView(owner_id=thread.owner_id)
-            await thread.send(embed=embed, view=view)
-            
-        except Exception as e:
-            print(f"❌ Erro ao enviar boas-vindas: {e}")
-
-@bot.event
-async def on_thread_create(thread):
-    # ID do teu fórum de trocas
-    ID_FORUM_TROCA = 1434310955004592360
-
-    # 1. Pequeno delay para garantir que a thread está estável
-    import asyncio
-    await asyncio.sleep(2)
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT motivo FROM blacklist WHERE user_id = %s', (thread.owner_id,))
-    blacklisted = cursor.fetchone()
-    conn.close()
-
-    if blacklisted:
-        await thread.send(f"🚨 **ALERTA DE SEGURANÇA** 🚨\n{thread.owner.mention}, você está na **LISTA NEGRA** deste servidor e não tem permissão para realizar trocas.\n**Motivo:** {blacklisted[0]}")
-        # Opcional: Trancar o tópico na hora
-        await thread.edit(locked=True, archived=True)
-        return
-
-    # 2. Verifica se o pai da thread é o fórum correto
-    # Usamos o ID do pai ou tentamos buscar o ID se o objeto estiver incompleto
-    parent_id = getattr(thread, "parent_id", None)
-
-    if thread.parent_id == ID_FORUM_TROCA:
-        try:
-            embed = discord.Embed(
-                title="📦 Nova Troca Iniciada!",
-            description=(
-                f"Olá {thread.owner.mention}, bem-vindo ao sistema de trocas!\n\n"
-                "**Dicas de Segurança:**\n"
-                "1. Verifique a reputação de alguém usando o comando `!perfil @membro` antes fazer uma troca.\n"
-                "2. Use o comando `!rep @membro` apenas após a troca ser concluída com sucesso.\n"
-                "3. Se por acaso for scammado, abra um ticket acionando nossos mods imediatamente e use o comando `!neg @membro` para negativar o raider.\n\n"
-                "***RMT: Compra e venda de itens com dinheiro real é PROIBIDO e passivo de banimento aqui e no jogo, cuida.***\n\n"
-            ),
-            color=discord.Color.blue()
-            )
-            embed.set_footer(text="ARC Raiders Brasil - Sistema de Trocas e Reputação")
-            view = FinalizarTrocaView() 
-            await thread.send(embed=embed, view=view)
-            print(f"✅ Mensagem de boas-vindas enviada no tópico: {thread.name}")
-        except Exception as e:
-            print(f"❌ Erro ao enviar boas-vindas no tópico {thread.id}: {e}")
-
-# --- COMANDOS ---
-@bot.command()
-async def ajuda(ctx):
-    embed = discord.Embed(title="📖 Lista de Comandos", color=discord.Color.blue())
-    embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação.", inline=True)
-    embed.add_field(name="💢 `!neg @membro`", value="Dá -1 de reputação.", inline=True)
-    embed.add_field(name="👤 `!perfil @membro`", value="Ver reputação.", inline=True)
-    embed.add_field(name="📡 `!raid mapa/objetivo 1`", value="Cria uma raid para duo.", inline=True)
-    embed.add_field(name="📡 `!raid mapa/objetivo 2`", value="Cria uma raid para trio.", inline=True)
-    embed.add_field(name="🏆 `!top`", value="Ver o ranking dos 10 melhores trocadores.", inline=True)
-    
-    if any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator:
-        embed.add_field(name="🛠️ Staff", value="`!setrep`, `!resetar`, `!say`, `!backup`, `!denunciar`, `!perdoar`", inline=False)
-    
-    embed.set_footer(text="Developer: fugazzeto | Sponsor: ! Gio | ARC Raiders Brasil")
-    await ctx.send(embed=embed)
-
 @bot.command()
 async def top(ctx):
     conn = get_db_connection()
-    if not conn:
-        return await ctx.send("❌ Erro ao conectar ao banco de dados.")
-    
+    if not conn: return await ctx.send("❌ Erro no banco de dados.")
     cursor = conn.cursor()
-    # Limitamos a busca aos 10 melhores
     cursor.execute('SELECT id, rep FROM usuarios ORDER BY rep DESC LIMIT 10')
     usuarios = cursor.fetchall()
-    cursor.close()
     conn.close()
-
-    if not usuarios:
-        return await ctx.send("⚠️ O ranking ainda está vazio.")
-
+    if not usuarios: return await ctx.send("⚠️ O ranking ainda está vazio.")
     descricao = ""
     for i, (uid, pontos) in enumerate(usuarios, 1):
-        # Tenta buscar o nome do usuário
         user = bot.get_user(uid)
         nome = user.name if user else f"Usuário Antigo ({uid})"
-        
-        # Formatação visual do ranking
-        if i == 1:
-            prefixo = "🥇 "
-        elif i == 2:
-            prefixo = "🥈 "
-        elif i == 3:
-            prefixo = "🥉 "
-        else:
-            prefixo = f"**{i}.** "
-
+        prefixo = "🥇 " if i == 1 else "🥈 " if i == 2 else "🥉 " if i == 3 else f"**{i}.** "
         descricao += f"{prefixo}{nome} — `{pontos} pts` \n"
-
-    embed = discord.Embed(
-        title="🏆 Top 10 - Maiores Reputações",
-        description=descricao,
-        color=0xf1c40f, # Cor dourada
-        timestamp=datetime.now()
-    )
+    embed = discord.Embed(title="🏆 Top 10 - Maiores Reputações", description=descricao, color=0xf1c40f, timestamp=datetime.now())
     embed.set_footer(text="ARC Raiders Brasil | Ranking de Confiança")
-    
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -447,47 +259,6 @@ async def rep(ctx, membro: discord.Member):
     await ctx.send(f"🌟 {ctx.author.mention} deu +1 rep para {membro.mention}!")
     await enviar_log(ctx, f"🌟 **Reputação Positiva**\nPara: {membro.mention}\nTotal: `{nova}`", 0x2ecc71)
     await verificar_cargos_nivel(ctx, membro, nova)
-
-@bot.command()
-async def finalizar(ctx):
-    """Exclui permanentemente o tópico do fórum de trocas."""
-    
-    # ID do teu fórum de trocas
-    ID_FORUM_TROCA = 1434310955004592360 
-
-    # 1. Verifica se o canal atual é uma Thread (post de fórum)
-    if not isinstance(ctx.channel, discord.Thread):
-        return await ctx.send("❌ Este comando só funciona dentro do fórum trocas-de-itens.", delete_after=5)
-
-    # 2. Verifica se o "pai" dessa thread é o Fórum de Trocas
-    if ctx.channel.parent_id != ID_FORUM_TROCA:
-        return await ctx.send("❌ Este comando só pode ser utilizado no fórum de trocas.", delete_after=5)
-
-    # Verificações de permissão (Dono do post ou Staff)
-    is_owner = ctx.author.id == ctx.channel.owner_id
-    is_staff = any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator
-
-    if is_owner or is_staff:
-        # Aviso antes de deletar (já que a exclusão é irreversível)
-        await ctx.send("⚠️ **Troca finalizada.** Este tópico será **EXCLUÍDO** permanentemente em 5 segundos..")
-        
-        import asyncio
-        await asyncio.sleep(5)
-        
-        try:
-            nome_topico = ctx.channel.name # Guarda o nome para o log antes de apagar
-            
-            # Registro no canal de Logs ANTES de deletar para não perder a referência
-            await enviar_log(ctx, f"🗑️ **Tópico Excluído**\nPost: `{nome_topico}`\nExecutor: {ctx.author.mention}", 0xe74c3c)
-            
-            # Exclui o tópico permanentemente
-            await ctx.channel.delete(reason=f"Finalizado por {ctx.author.name}")
-            
-        except Exception as e:
-            print(f"Erro ao excluir tópico: {e}")
-            await ctx.send("❌ Ocorreu um erro ao tentar excluir o tópico.")
-    else:
-        await ctx.send("❌ Apenas o dono do post ou a staff podem finalizar e excluir esta troca.", delete_after=5)
 
 @bot.command()
 @commands.cooldown(1, 7200, commands.BucketType.user)
@@ -506,17 +277,12 @@ async def perfil(ctx, membro: discord.Member = None):
     membro = membro or ctx.author
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # Busca Reputação
     cursor.execute('SELECT rep FROM usuarios WHERE id = %s', (membro.id,))
     res_rep = cursor.fetchone()
     pontos = res_rep[0] if res_rep else 0
-    
-    # Busca se está na Blacklist
     cursor.execute('SELECT motivo FROM blacklist WHERE user_id = %s', (membro.id,))
     res_black = cursor.fetchone()
     conn.close()
-    
     if res_black:
         embed = discord.Embed(title=f"⚠️ PERFIL DE RISCO: {membro.name} ⚠️", color=0xff0000)
         embed.description = f"🚨 **ESTE USUÁRIO ESTÁ NA LISTA NEGRA!**\n**Motivo:** {res_black[0]}"
@@ -527,11 +293,9 @@ async def perfil(ctx, membro: discord.Member = None):
         elif pontos >= 50: status = "Trocador Confiável ✅"
         elif pontos >= 10: status = "Trocador Iniciante ✅"
         elif pontos <= -10: status = "Trocador Perigoso ❌"
-
         embed = discord.Embed(title=f"Perfil de {membro.name}", color=0x2ecc71)
         embed.add_field(name="Pontos de Reputação", value=f"`{pontos}`", inline=True)
         embed.add_field(name="Status", value=status, inline=True)
-    
     embed.set_thumbnail(url=membro.display_avatar.url)
     await ctx.send(embed=embed)
 
@@ -545,7 +309,6 @@ async def setrep(ctx, membro: discord.Member, valor: int):
 @bot.command()
 @eh_staff()
 async def resetar(ctx, membro: discord.Member):
-    """Reseta a reputação de um membro para 0."""
     nova = alterar_rep(membro.id, 0, definir=True)
     await ctx.send(f"♻️ A reputação de {membro.mention} foi resetada para 0.")
     await enviar_log(ctx, f"♻️ **Reset de Reputação**\nAlvo: {membro.mention}", 0x95a5a6)
@@ -554,178 +317,144 @@ async def resetar(ctx, membro: discord.Member):
 @bot.command()
 @eh_staff()
 async def colocar_botao(ctx):
-    """Comando manual para colocar o botão em um tópico existente"""
     if isinstance(ctx.channel, discord.Thread):
-        view = FinalizarTrocaView()
-        await ctx.send("Clique abaixo para finalizar esta troca:", view=view)
+        await ctx.send("Clique abaixo para finalizar esta troca:", view=FinalizarTrocaView())
     else:
         await ctx.send("Este comando só funciona dentro de um tópico!")
 
 @bot.command()
 @eh_staff()
 async def say(ctx, canal_ou_msg=None, *, mensagem: str = None):
-    """
-    Faz o bot falar.
-    Uso: !say Mensagem (no canal atual)
-    Uso: !say #canal Mensagem (em outro canal)
-    """
-    # 1. Caso: !say #canal Mensagem
-    # O discord.py converte menções de canal automaticamente se usarmos Union ou checagem manual
     if canal_ou_msg and canal_ou_msg.startswith('<#'):
         try:
             target_channel = await commands.TextChannelConverter().convert(ctx, canal_ou_msg)
             msg_final = mensagem
         except:
-            target_channel = ctx.channel
-            msg_final = f"{canal_ou_msg} {mensagem or ''}"
-    
-    # 2. Caso: !say Mensagem (no canal atual)
+            target_channel, msg_final = ctx.channel, f"{canal_ou_msg} {mensagem or ''}"
     else:
-        target_channel = ctx.channel
-        # Junta o primeiro argumento com o resto da mensagem
-        msg_final = f"{canal_ou_msg} {mensagem or ''}".strip()
-
-    if not msg_final or msg_final == "None":
-        return await ctx.send("❌ Você precisa digitar uma mensagem!", delete_after=5)
-
-    try:
-        await ctx.message.delete()
-    except:
-        pass
-
+        target_channel, msg_final = ctx.channel, f"{canal_ou_msg} {mensagem or ''}".strip()
+    if not msg_final or msg_final == "None": return await ctx.send("❌ Você precisa digitar uma mensagem!")
+    try: await ctx.message.delete()
+    except: pass
     await target_channel.send(msg_final)
     await enviar_log(ctx, f"📢 **Comando !say**\n**Canal:** {target_channel.mention}\n**Conteúdo:** {msg_final}", 0x9b59b6)
 
 @bot.command()
 @eh_staff()
 async def denunciar(ctx, membro: discord.Member, *, motivo: str):
-    """Adiciona um usuário à lista negra de trocas."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     try:
-        cursor.execute('''
-            INSERT INTO blacklist (user_id, motivo, staff_id) 
-            VALUES (%s, %s, %s) 
-            ON CONFLICT (user_id) DO UPDATE SET motivo = EXCLUDED.motivo
-        ''', (membro.id, motivo, ctx.author.id))
+        cursor.execute('INSERT INTO blacklist (user_id, motivo, staff_id) VALUES (%s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET motivo = EXCLUDED.motivo', (membro.id, motivo, ctx.author.id))
         conn.commit()
-        
-        # Opcional: Remover todos os pontos de rep do scammer
         alterar_rep(membro.id, -999, definir=True)
-        
         embed = discord.Embed(title="🚫 Usuário Banido das Trocas", color=0xff0000)
         embed.add_field(name="Membro", value=membro.mention, inline=True)
         embed.add_field(name="Motivo", value=motivo, inline=True)
-        embed.set_footer(text="Este usuário foi marcado como PERIGOSO.")
-        
         await ctx.send(embed=embed)
         await enviar_log(ctx, f"🚫 **BLACK-LIST**\nAlvo: {membro.mention}\nMotivo: {motivo}", 0xff0000)
-        
-    except Exception as e:
-        await ctx.send(f"❌ Erro ao processar denúncia: {e}")
-    finally:
-        conn.close()
+    except Exception as e: await ctx.send(f"❌ Erro: {e}")
+    finally: conn.close()
 
 @bot.command()
 @eh_staff()
 async def perdoar(ctx, membro: discord.Member):
-    """Remove um usuário da lista negra."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('DELETE FROM blacklist WHERE user_id = %s', (membro.id,))
     conn.commit()
     conn.close()
-    
     await ctx.send(f"✅ {membro.mention} foi removido da lista negra.")
     await enviar_log(ctx, f"🛡️ **PERDÃO**\nAlvo: {membro.mention} removido da blacklist.", 0x2ecc71)
 
 @bot.command()
 @eh_staff()
 async def backup(ctx):
-    """Gera um ficheiro de texto com toda a base de dados de reputação."""
-    await ctx.send("📂 A gerar backup da base de dados... Por favor, aguardue.")
-    
+    await ctx.send("📂 Gerando backup...")
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # 1. Backup de Reputação
         cursor.execute('SELECT id, rep FROM usuarios ORDER BY rep DESC')
         usuarios = cursor.fetchall()
-        
-        # 2. Backup de Blacklist
         cursor.execute('SELECT user_id, motivo FROM blacklist')
         blacklisted = cursor.fetchall()
-        
         conn.close()
-
-        # Criar o conteúdo do ficheiro em memória
         buffer = io.StringIO()
-        buffer.write(f"--- BACKUP REPUTAÇÃO ARC RAIDERS BRASIL ({datetime.now().strftime('%d/%m/%Y %H:%M')}) ---\n\n")
-        
-        buffer.write("🌟 RANKING DE REPUTAÇÃO:\n")
+        buffer.write(f"--- BACKUP ARC RAIDERS BRASIL ({datetime.now().strftime('%d/%m/%Y %H:%M')}) ---\n\n🌟 RANKING:\n")
         for uid, pts in usuarios:
-            user = bot.get_user(uid)
-            nome = user.name if user else f"Desconhecido({uid})"
-            buffer.write(f"ID: {uid} | Nome: {nome} | Pontos: {pts}\n")
-            
-        buffer.write("\n" + "="*50 + "\n\n")
-        
-        buffer.write("🚫 LISTA NEGRA (BLACKLIST):\n")
-        if not blacklisted:
-            buffer.write("Nenhum raider na lista negra.\n")
-        for uid, motivo in blacklisted:
-            user = bot.get_user(uid)
-            nome = user.name if user else f"Desconhecido({uid})"
-            buffer.write(f"ID: {uid} | Nome: {nome} | Motivo: {motivo}\n")
-
+            u = bot.get_user(uid)
+            buffer.write(f"ID: {uid} | Nome: {u.name if u else 'Desconhecido'} | Pts: {pts}\n")
+        buffer.write("\n🚫 BLACKLIST:\n")
+        for uid, mot in blacklisted:
+            u = bot.get_user(uid)
+            buffer.write(f"ID: {uid} | Nome: {u.name if u else 'Desconhecido'} | Motivo: {mot}\n")
         buffer.seek(0)
-        
-        # Enviar como ficheiro
-        file = discord.File(fp=buffer, filename=f"backup_rep_{datetime.now().strftime('%d_%m_%Y')}.txt")
-        await ctx.send(content="✅ Aqui está o backup completo do sistema:", file=file)
-        
-        await enviar_log(ctx, "📂 **Backup do Sistema** realizado com sucesso.", 0x9b59b6)
+        await ctx.send(content="✅ Backup concluído:", file=discord.File(fp=buffer, filename=f"backup_{datetime.now().strftime('%d_%m_%Y')}.txt"))
+    except Exception as e: await ctx.send(f"❌ Erro: {e}")
 
-    except Exception as e:
-        await ctx.send(f"❌ Erro ao gerar backup: {e}")
+# --- EVENTOS ---
+@bot.event
+async def on_ready():
+    setup_db()
+    bot.add_view(FinalizarTrocaView()) # Essencial para o botão funcionar após reiniciar
+    if not manter_banco_vivo.is_running():
+        manter_banco_vivo.start()
+    print(f"✅ {bot.user.name} ONLINE!")
+    await bot.change_presence(activity=discord.Game(name="!ajuda | ARC Raiders Brasil"))
+
+@bot.event
+async def on_thread_create(thread):
+    await asyncio.sleep(2)
+    # 1. Checa Blacklist
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT motivo FROM blacklist WHERE user_id = %s', (thread.owner_id,))
+    blacklisted = cursor.fetchone()
+    conn.close()
+
+    if blacklisted:
+        await thread.send(f"🚨 **ALERTA DE SEGURANÇA** 🚨\n{thread.owner.mention}, você está na **LISTA NEGRA** e não pode trocar.\n**Motivo:** {blacklisted[0]}")
+        await thread.edit(locked=True, archived=True)
+        return
+
+    # 2. Envia Boas-vindas e Botão se for no fórum de trocas
+    if thread.parent_id == ID_FORUM_TROCA:
+        try:
+            embed = discord.Embed(
+                title="📦 Nova Troca Iniciada!",
+                description=(
+                    f"Olá {thread.owner.mention}, bem-vindo ao sistema de trocas!\n\n"
+                    "**Dicas de Segurança:**\n"
+                    "1. Verifique a reputação de alguém usando o comando `!perfil @membro` antes fazer uma troca.\n"
+                    "2. Use o comando `!rep @membro` apenas após a troca ser concluída com sucesso.\n"
+                    "3. Se por acaso for scammado, abra um ticket acionando nossos mods imediatamente e use o comando `!neg @membro` para negativar o raider.\n\n"
+                    "***RMT: Compra e venda de itens com dinheiro real é PROIBIDO e passivo de banimento aqui e no jogo, cuida.***\n\n"
+                ),
+                color=discord.Color.blue()
+            )
+            embed.set_footer(text="ARC Raiders Brasil - Sistema de Trocas e Reputação")
+            await thread.send(embed=embed, view=FinalizarTrocaView())
+            print(f"✅ Botão enviado no tópico: {thread.name}")
+        except Exception as e: print(f"❌ Erro thread: {e}")
 
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
-        minutos = int(error.retry_after // 60)
-        await ctx.send(f"⏳ Aguarde {minutos} minutos.", delete_after=10)
+        await ctx.send(f"⏳ Aguarde {int(error.retry_after // 60)} minutos.", delete_after=10)
     elif isinstance(error, commands.CheckFailure):
-        # Opcional: Avisar que o canal está errado
         if not ctx.author.guild_permissions.administrator:
              await ctx.send(f"❌ {ctx.author.mention}, este comando não pode ser usado aqui.", delete_after=7)
-
-from discord.ext import tasks
 
 @tasks.loop(minutes=10)
 async def manter_banco_vivo():
     try:
         conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1") # Uma query simples só para manter o túnel ativo
-        conn.close()
-        print("ping no banco: OK")
-    except Exception as e:
-        print(f"Erro no ping do banco: {e}")
-
-@bot.event
-async def on_ready():
-    setup_db()
-    
-    # REGISTRO DA VIEW PERSISTENTE
-    bot.add_view(FinalizarTrocaView()) 
-    
-    if not manter_banco_vivo.is_running():
-        manter_banco_vivo.start()
-        
-    print(f"✅ {bot.user.name} Bot Online!")
-    await bot.change_presence(activity=discord.Game(name="!ajuda | ARC Raiders Brasil"))
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            conn.close()
+            print("ping no banco: OK")
+    except Exception as e: print(f"Erro ping banco: {e}")
 
 if __name__ == "__main__":
     setup_db()
