@@ -370,7 +370,6 @@ async def ajuda(ctx):
     embed.add_field(name="👤 `!perfil @membro`", value="Ver reputação.", inline=True)
     embed.add_field(name="📡 `!raid mapa/objetivo 1`", value="Cria uma raid para duo.", inline=True)
     embed.add_field(name="📡 `!raid mapa/objetivo 2`", value="Cria uma raid para trio.", inline=True)
-    embed.add_field(name="✅ `!finalizar`", value="Finaliza uma troca e fecha o tópico.", inline=True)
     embed.add_field(name="🏆 `!top`", value="Ver o ranking dos 10 melhores trocadores.", inline=True)
     
     if any(role.name.lower() == "mods" for role in ctx.author.roles) or ctx.author.guild_permissions.administrator:
