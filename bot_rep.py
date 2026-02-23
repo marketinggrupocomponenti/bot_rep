@@ -340,11 +340,11 @@ async def raid(ctx, mapa: str, vagas_extras: int):
         return await ctx.send(f"❌ Use este comando em <#{ID_CANAL_RAID}>", delete_after=5)
 
     if vagas_extras < 1 or vagas_extras > 2:
-        return await ctx.send("❌ Use `!raid [mapa/objetivo] 1` para Duo ou `2` para Trio.", delete_after=10)
+        return await ctx.send("❌ Use `!raid [mapa] 1` para Duo ou `2` para Trio.", delete_after=10)
 
     total = vagas_extras + 1
     embed = discord.Embed(title=f"🚨 Recrutamento: {'DUO' if total==2 else 'TRIO'}", color=discord.Color.green())
-    embed.add_field(name="📍 Mapa/Objetivo", value=mapa.upper(), inline=True)
+    embed.add_field(name="📍 Mapa", value=mapa.upper(), inline=True)
     embed.add_field(name=f"Membros (1/{total})", value=f"👤 {ctx.author.mention}", inline=False)
     
     await ctx.send(embed=embed, view=RaidView(ctx.author, mapa, total))
@@ -355,8 +355,8 @@ async def ajuda(ctx):
     embed.add_field(name="🌟 `!rep @membro`", value="Dá +1 de reputação.", inline=True)
     embed.add_field(name="💢 `!neg @membro`", value="Dá -1 de reputação.", inline=True)
     embed.add_field(name="👤 `!perfil @membro`", value="Ver reputação.", inline=True)
-    embed.add_field(name="📡 `!raid mapa/objetivo 1`", value="Cria uma raid para duo.", inline=True)
-    embed.add_field(name="📡 `!raid mapa/objetivo 2`", value="Cria uma raid para trio.", inline=True)
+    embed.add_field(name="📡 `!raid mapa 1`", value="Cria uma raid para duo.", inline=True)
+    embed.add_field(name="📡 `!raid mapa 2`", value="Cria uma raid para trio.", inline=True)
     embed.add_field(name="✅ `!finalizar`", value="Finaliza uma troca e fecha o tópico.", inline=True)
     embed.add_field(name="🏆 `!top`", value="Ver o ranking dos 10 melhores trocadores.", inline=True)
     
