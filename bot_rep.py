@@ -629,7 +629,7 @@ async def postar_regras(ctx):
         description=(
             "Bem-vindo à Resistência! Para garantir uma convivência tática e justa, siga as normas:\n\n"
             "**1. RESPEITO ACIMA DE TUDO**\n"
-            "Sem toxicidade, racismo, homofobia ou qualquer tipo de preconceito. Somos um squad.\n\n"
+            "Sem toxicidade, racismo, homofobia ou qualquer tipo de preconceito. Somos um comunidade.\n\n"
             "**2. PROIBIDO RMT (Real Money Trade)**\n"
             "Compra e venda de itens ou contas por dinheiro real é terminantemente proibida. Sujeito a banimento imediato.\n\n"
             "**3. TRAPAÇAS E HACKS**\n"
