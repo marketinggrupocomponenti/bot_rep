@@ -234,7 +234,7 @@ async def ajuda(ctx):
             "🌟 `!rep @membro` - Dá +1 de reputação positiva.\n"
             "💢 `!neg @membro` - Dá -1 de reputação negativa.\n"
             "👤 `!perfil @membro` - Consulta a ficha e o status do raider.\n"
-            "🏆 `!top` - Exibe os 10 raiders mais confiáveis para trocas."
+            "🏆 `!top` - Exibe os 10 raiders mais confiáveis para trocas.\n\n"
         ),
         inline=False
     )
@@ -244,7 +244,7 @@ async def ajuda(ctx):
         name="📡 COMUNICAÇÃO DE RAID",
         value=(
             "🚨 `!raid [mapa] 1` - Abre chamada para **DUO**.\n"
-            "🚨 `!raid [mapa] 2` - Abre chamada para **TRIO**.\n"
+            "🚨 `!raid [mapa] 2` - Abre chamada para **TRIO**.\n\n"
         ),
         inline=False
     )
@@ -261,7 +261,7 @@ async def ajuda(ctx):
                 "🧹 `!limpar [n]` - Faxina rápida no canal.\n"
                 "🚨 `!denunciar @membro [tipo] [motivo]` - Blacklist global.\n"
                 "📜 `!setrep @membro [pontos]` - Alterar reputação de algum raider.\n"
-                "⚙️ `!status` - Saúde do banco de dados e do bot."
+                "⚙️ `!status` - Saúde do banco de dados e do bot.\n\n"
             ),
             inline=False
         )
