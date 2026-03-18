@@ -94,13 +94,14 @@ async def verificar_canal(ctx):
     if isinstance(ctx.channel, discord.DMChannel): 
         return False
     
-    # Staff pode usar comandos em qualquer canal
+    # Staff/ADM ignora todas as restrições de canal abaixo
     is_admin = ctx.author.guild_permissions.administrator
     is_mod = any(role.name.lower() == "mods" for role in ctx.author.roles)
+    
     if is_admin or is_mod:
         return True
     
-    # Usuários comuns só nos canais permitidos
+    # Restrição apenas para usuários comuns
     parent_id = getattr(ctx.channel, "parent_id", None)
     no_forum_troca = (ctx.channel.id == ID_FORUM_TROCA or parent_id == ID_FORUM_TROCA)
     no_canal_raid = (ctx.channel.id == ID_CANAL_RAID)
@@ -438,29 +439,37 @@ async def colocar_botao(ctx):
 async def falar(ctx, tipo: str, *, mensagem: str = None):
     """
     Uso: 
-    !falar texto [mensagem] (Anexe uma foto se quiser)
-    !falar embed "Título" [mensagem] (Anexe uma foto se quiser)
+    !falar texto [mensagem] (com imagem anexada)
+    !falar embed "Título" [mensagem] (com imagem anexada)
     """
-    if not mensagem and not ctx.message.attachments:
+    # 1. Verifica se há conteúdo ou imagem
+    tem_anexo = len(ctx.message.attachments) > 0
+    if not mensagem and not tem_anexo:
         return await ctx.send("❌ Digite uma mensagem ou anexe uma imagem!", delete_after=10)
 
+    tipo = tipo.lower()
+    
+    # 2. Captura a imagem antes de apagar a mensagem
+    arquivo_para_enviar = None
+    url_da_imagem = None
+    
+    if tem_anexo:
+        # Pega a URL para o Embed ou o arquivo para o modo Texto
+        url_da_imagem = ctx.message.attachments[0].url
+        arquivo_para_enviar = await ctx.message.attachments[0].to_file()
+
+    # 3. Tenta apagar o comando original
     try: await ctx.message.delete()
     except: pass
 
-    tipo = tipo.lower()
-    imagem_url = ctx.message.attachments[0].url if ctx.message.attachments else None
-
-    # --- OPÇÃO 1: TEXTO ---
+    # --- MODO TEXTO ---
     if tipo == "texto":
-        # Se tiver imagem, envia a imagem com a mensagem na legenda
-        if imagem_url:
-            await ctx.send(content=f"{mensagem if mensagem else ''}\n\n_Enviado por: {ctx.author.mention}_", file=await ctx.message.attachments[0].to_file())
-        else:
-            await ctx.send(f"{mensagem}\n\n_Enviado por: {ctx.author.mention}_")
-        
-        await enviar_log(ctx, f"📢 **Mensagem de Texto**\n**Canal:** {ctx.channel.mention}", 0x9b59b6)
+        # Se tiver imagem, envia o arquivo junto com o texto
+        texto_final = f"{mensagem if mensagem else ''}\n\n_Enviado por: {ctx.author.mention}_"
+        await ctx.send(content=texto_final, file=arquivo_para_enviar)
+        await enviar_log(ctx, f"📢 **Msg Texto** em {ctx.channel.mention}", 0x9b59b6)
 
-    # --- OPÇÃO 2: EMBED ---
+    # --- MODO EMBED ---
     elif tipo == "embed":
         # Lógica de Título entre aspas
         if mensagem and '"' in mensagem:
@@ -468,7 +477,7 @@ async def falar(ctx, tipo: str, *, mensagem: str = None):
             titulo = partes[1]
             conteudo = partes[2].strip()
         else:
-            titulo = "Aviso Oficial"
+            titulo = "Informativo ARC Raiders"
             conteudo = mensagem if mensagem else ""
 
         embed = discord.Embed(title=f"📢 {titulo}", description=conteudo, color=0xf1c40f)
@@ -476,14 +485,14 @@ async def falar(ctx, tipo: str, *, mensagem: str = None):
         if ctx.guild.icon:
             embed.set_author(name="Comunidade ARC Raiders Brasil", icon_url=ctx.guild.icon.url)
         
-        # Se houver anexo, coloca no "corpo" do embed
-        if imagem_url:
-            embed.set_image(url=imagem_url)
+        # O segredo: Setamos a URL da imagem no Embed
+        if url_da_imagem:
+            embed.set_image(url=url_da_imagem)
             
-        embed.set_footer(text=f"Enviado por: {ctx.author.name}", icon_url=ctx.author.display_avatar.url)
+        embed.set_footer(text=f"Staff: {ctx.author.name}", icon_url=ctx.author.display_avatar.url)
         
         await ctx.send(content="@everyone", embed=embed)
-        await enviar_log(ctx, f"📢 **Anúncio em Embed**\n**Canal:** {ctx.channel.mention}\n**Título:** {titulo}", 0xf1c40f)
+        await enviar_log(ctx, f"📢 **Anúncio Embed** em {ctx.channel.mention}\nTítulo: {titulo}", 0xf1c40f)
 
     else:
         await ctx.send("❌ Escolha `texto` ou `embed`.", delete_after=10)
@@ -562,15 +571,220 @@ async def backup(ctx):
         await ctx.send(content="✅ Backup concluído:", file=discord.File(fp=buffer, filename=f"backup_{datetime.now().strftime('%d_%m_%Y')}.txt"))
     except Exception as e: await ctx.send(f"❌ Erro: {e}")
 
+@bot.command()
+@eh_staff()
+async def postar_regras(ctx):
+    """Posta o mural de regras com o botão de verificação."""
+    try: await ctx.message.delete()
+    except: pass
+
+    embed = discord.Embed(
+        title="🛰️ DIRETRIZES DA COMUNIDADE - ARC RAIDERS BRASIL",
+        description=(
+            "Bem-vindo à Resistência! Para garantir uma convivência tática e justa, siga as normas:\n\n"
+            "**1. RESPEITO ACIMA DE TUDO**\n"
+            "Sem toxicidade, racismo, homofobia ou qualquer tipo de preconceito. Somos um squad.\n\n"
+            "**2. PROIBIDO RMT (Real Money Trade)**\n"
+            "Compra e venda de itens ou contas por dinheiro real é terminantemente proibida. Sujeito a banimento imediato.\n\n"
+            "**3. TRAPAÇAS E HACKS**\n"
+            "O uso de softwares de terceiros (Aimbot, Wallhack, etc) resultará em blacklist global no servidor e denunciado para os devs. Isso também inclui, mas não se limita a, mencionar o uso de qualquer um dos itens acima ou compartilhar links para acessar esse tipo de conteúdo.\n\n"
+            "**4. CANAIS DE TROCA**\n"
+            "Use o sistema de reputação (`!rep`/`!neg`) para manter a segurança da comunidade.\n\n"
+            "**5. CONDUTA EM RAID**\n"
+            "Seja um bom parceiro. Abandonar o squad propositalmente ou 'trollar' extrações gera má reputação.\n\n"
+            "**6. SEM PUBLICIDADE**\n"
+            "Não é permitido publicar links, imagens ou mensagens que contenham ou se relacionem a anúncios. Isso inclui links/códigos de indicação, convites para servidores e promoção em redes sociais Existem canais e cargos para certas divulgações.\n\n"
+            "**7. SEM DISCUSSÕES POLARIZADAS OU INTENCIONALMENTE CONTROVERSAS**\n"
+            "Não inicie conversas com a intenção de causar conflito ou indignação. Evite tópicos fortemente polarizadores, como alinhamento político ou crenças religiosas.\n\n"
+            "**As regras acima não são exaustivas. Administradores e moderadores usarão seu bom senso ao lidar com comportamentos perturbadores.**"
+            "**Ao clicar no botão abaixo, você confirma que leu e concorda com as regras.**"
+        ),
+        color=0x2ecc71
+    )
+    
+    if ctx.guild.icon:
+        embed.set_thumbnail(url=ctx.guild.icon.url)
+    
+    embed.set_footer(text="Segurança ARC Raiders Brasil", icon_url=bot.user.display_avatar.url)
+    
+    await ctx.send(embed=embed, view=RegrasView())
+
+@bot.command()
+@eh_staff()
+async def postar_suporte(ctx):
+    """Posta o painel de abertura de tickets."""
+    try: await ctx.message.delete()
+    except: pass
+
+    embed = discord.Embed(
+        title="📩 Precisa de ajuda ou denunciar algo?",
+        description=(
+            "Clique no botão abaixo para abrir um canal de atendimento privado com a nossa staff.\n\n"
+            "**O que você pode tratar aqui:**\n"
+            "• Denúncias de hackers/scammers.\n"
+            "• Denúncias sobre má conduta ou quebra de regra.\n"
+            "• Dúvidas gerais sobre a comunidade.\n\n"
+            "*Evite abrir tickets sem necessidade.*"
+        ),
+        color=0x3498db
+    )
+    await ctx.send(embed=embed, view=AbrirTicketView())
+
 # --- EVENTOS ---
 @bot.event
 async def on_ready():
     setup_db()
-    bot.add_view(FinalizarTrocaView()) # Essencial para o botão funcionar após reiniciar
+    # Registrando todas as views persistentes
+    bot.add_view(FinalizarTrocaView()) 
+    bot.add_view(RegrasView())
+    bot.add_view(AbrirTicketView()) # <--- NOVO
+    bot.add_view(TicketControlView()) # <--- NOVO
+    
     if not manter_banco_vivo.is_running():
         manter_banco_vivo.start()
     print(f"✅ {bot.user.name} ONLINE!")
     await bot.change_presence(activity=discord.Game(name="!ajuda | ARC Raiders Brasil"))
+
+class RegrasView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None) # Sem timeout para o botão não parar de funcionar
+
+    @discord.ui.button(label="Aceitar e Entrar", style=discord.ButtonStyle.green, emoji="✅", custom_id="btn_aceitar_regras")
+    async def aceitar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # NOME DO CARGO: Mude para o nome do cargo inicial do seu servidor
+        nome_cargo = "raider" 
+        cargo = discord.utils.get(interaction.guild.roles, name=nome_cargo)
+
+        if not cargo:
+            return await interaction.response.send_message(f"❌ Erro: O cargo `{nome_cargo}` não existe no servidor. Avise a Staff!", ephemeral=True)
+
+        if cargo in interaction.user.roles:
+            return await interaction.response.send_message("✅ Você já aceitou as regras e já é um Raider!", ephemeral=True)
+
+        try:
+            await interaction.user.add_roles(cargo)
+            await interaction.response.send_message(f"🚀 Bem-vindo ao fronte, {interaction.user.name}! Você agora é um **{nome_cargo}**. Cuidado com os ARC's, outros raiders e boa sorte na extração!", ephemeral=True)
+            # Log opcional
+            await enviar_log(interaction, f"✅ **Novo Membro**\n{interaction.user.mention} aceitou as regras.", 0x2ecc71)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Eu não tenho permissão para dar cargos. Verifique minha posição na lista de cargos!", ephemeral=True)
+
+class ConfirmarFecharTicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Sim, Fechar Ticket", style=discord.ButtonStyle.danger, custom_id="btn_confirmar_fechar")
+    async def confirmar_fechar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("🔒 Gerando transcrição e fechando ticket...")
+        
+        canal_ticket = interaction.channel
+        
+        # --- GERAR TRANSCRIÇÃO ---
+        log_content = f"--- TRANSCRIÇÃO DE TICKET: {canal_ticket.name} ---\n"
+        log_content += f"Data de Fechamento: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n"
+        log_content += f"Fechado por: {interaction.user.name}\n"
+        log_content += "------------------------------------------\n\n"
+
+        # Pega as últimas 500 mensagens do ticket
+        async for msg in canal_ticket.history(limit=500, oldest_first=True):
+            timestamp = msg.created_at.strftime('%d/%m/%Y %H:%M')
+            log_content += f"[{timestamp}] {msg.author.name}: {msg.content}\n"
+            if msg.attachments:
+                for att in msg.attachments:
+                    log_content += f"   > Anexo: {att.url}\n"
+
+        # Transforma o texto em um arquivo para o Discord
+        buffer = io.BytesIO(log_content.encode('utf-8'))
+        arquivo_log = discord.File(fp=buffer, filename=f"log_{canal_ticket.name}.txt")
+
+        # Envia o log para o canal de LOG_CHANNEL_ID definido no seu .env
+        await enviar_log(interaction, f"🔒 **Ticket Encerrado**\nCanal: `{canal_ticket.name}`\nExecutor: {interaction.user.mention}", 0xe74c3c)
+        
+        canal_logs = bot.get_channel(LOG_CHANNEL_ID)
+        if canal_logs:
+            await canal_logs.send(content=f"📄 Transcrição completa do ticket `{canal_ticket.name}`:", file=arquivo_log)
+
+        await asyncio.sleep(3)
+        await canal_ticket.delete()
+
+class TicketControlView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Fechar ticket", style=discord.ButtonStyle.secondary, emoji="🔒", custom_id="btn_fechar_ticket")
+    async def fechar_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Apenas staff ou o dono do ticket podem clicar
+        is_staff = any(role.name.lower() == "mods" for role in interaction.user.roles) or interaction.user.guild_permissions.administrator
+        if not is_staff:
+            return await interaction.response.send_message("❌ Apenas a staff pode encerrar o ticket.", ephemeral=True)
+            
+        await interaction.response.send_message("⚠️ Tem certeza que deseja fechar este atendimento?", view=ConfirmarFecharTicketView(), ephemeral=True)
+
+class AbrirTicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Abrir Ticket / Denúncia", style=discord.ButtonStyle.primary, emoji="📩", custom_id="btn_abrir_ticket")
+    async def abrir_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild = interaction.guild
+        user = interaction.user
+        id_categoria_ticket = 1432701386738499666 # <--- O ID que você informou
+        
+        # Nome do canal do ticket
+        nome_canal = f"ticket-{user.name}".lower()
+        
+        # Verifica se já existe um ticket aberto para esse user
+        existente = discord.utils.get(guild.channels, name=nome_canal)
+        if existente:
+            return await interaction.response.send_message(f"❌ Você já possui um ticket aberto em {existente.mention}!", ephemeral=True)
+
+        # Configura as permissões do canal
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        }
+        
+        # Adiciona permissão para o cargo "mods"
+        cargo_mod = discord.utils.get(guild.roles, name="mods")
+        if cargo_mod:
+            overwrites[cargo_mod] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+
+        # Busca a categoria pelo ID
+        categoria = guild.get_channel(id_categoria_ticket)
+
+        try:
+            # Cria o canal DENTRO da categoria
+            ticket_channel = await guild.create_text_channel(
+                nome_canal, 
+                overwrites=overwrites, 
+                category=categoria,
+                reason=f"Ticket aberto por {user.name}"
+            )
+            
+            await interaction.response.send_message(f"✅ Ticket criado! Siga para {ticket_channel.mention}", ephemeral=True)
+            
+            # Embed inicial dentro do ticket
+            embed = discord.Embed(
+            title="🛰️ Central de Suporte - ARC Raiders Brasil",
+            description=(
+                f"Olá {user.mention}, favor ler abaixo e explicar a sua situação.\n\n"
+                "**Caso tenha aberto o ticket por engano favor informar.\n"
+                "**Para denúncias:** Informar o ocorrido, enviar prints/vídeos e o ID (discord) do suspeito.\n"
+                "**Para bugs/suporte ao jogo:** Logue com sua Embark ID e abra um ticket no link: https://id.embark.games/pt-BR/arc-raiders/support\n\n"
+                "Para as denúncias, as medidas serão tomadas apenas caso tenha provas consistentes e concretas sobre o assunto abordado."
+                "Aguarde um membro da staff entrar em contato."
+                ),
+                color=0x3498db
+            )
+            embed.set_footer(text="Use o botão abaixo para encerrar o atendimento.")
+            
+            # Menciona os mods para eles receberem notificação no novo ticket
+            mencao_staff = f" <@&{cargo_mod.id}>" if cargo_mod else ""
+            await ticket_channel.send(content=f"{user.mention} | {mencao_staff}", embed=embed, view=TicketControlView())
+
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Erro ao criar ticket: {e}", ephemeral=True)
 
 @bot.event
 async def on_thread_create(thread):
