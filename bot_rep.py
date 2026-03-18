@@ -632,7 +632,7 @@ async def postar_regras(ctx):
             "**2. PROIBIDO RMT (Real Money Trade)**\n"
             "Compra e venda de itens ou contas por dinheiro real é terminantemente proibida. Sujeito a banimento imediato.\n\n"
             "**3. TRAPAÇAS E HACKS**\n"
-            "O uso de softwares de terceiros (Aimbot, Wallhack, etc) resultará em blacklist global no servidor e denunciado para os devs. Isso também inclui, mas não se limita a, mencionar o uso de qualquer um dos itens acima ou compartilhar links para acessar esse tipo de conteúdo.\n\n"
+            "O uso de softwares de terceiros (Aimbot, Wallhack, etc) resultará em blacklist global no servidor e denunciado para os devs. Também não é permitido, mencionar o uso de qualquer um dos itens acima ou compartilhar links para acessar esse tipo de conteúdo.\n\n"
             "**4. CANAIS DE TROCA**\n"
             "Use o sistema de reputação (`!rep`/`!neg`) para manter a segurança da comunidade.\n\n"
             "**5. CONDUTA EM RAID**\n"
