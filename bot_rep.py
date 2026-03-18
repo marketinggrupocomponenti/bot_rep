@@ -642,7 +642,7 @@ async def postar_regras(ctx):
             "Não é permitido publicar links, imagens ou mensagens que contenham ou se relacionem a anúncios. Isso inclui links/códigos de indicação, convites para servidores e promoção em redes sociais Existem canais e cargos para certas divulgações.\n\n"
             "**7. SEM DISCUSSÕES POLARIZADAS OU INTENCIONALMENTE CONTROVERSAS**\n"
             "Não inicie conversas com a intenção de causar conflito ou indignação. Evite tópicos fortemente polarizadores, como alinhamento político ou crenças religiosas.\n\n"
-            "**As regras acima não são exaustivas. Administradores e moderadores usarão seu bom senso ao lidar com comportamentos perturbadores.**"
+            "**As regras acima não são exaustivas. Administradores e moderadores usarão seu bom senso ao lidar com comportamentos perturbadores.** \n"
             "**Ao clicar no botão abaixo, você confirma que leu e concorda com as regras.**"
         ),
         color=0x2ecc71
