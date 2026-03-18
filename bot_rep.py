@@ -698,18 +698,18 @@ class RegrasView(discord.ui.View):
     @discord.ui.button(label="Aceitar e Entrar", style=discord.ButtonStyle.green, emoji="✅", custom_id="btn_aceitar_regras")
     async def aceitar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         # NOME DO CARGO: Mude para o nome do cargo inicial do seu servidor
-        nome_cargo = "raider" 
+        nome_cargo = "speranza" 
         cargo = discord.utils.get(interaction.guild.roles, name=nome_cargo)
 
         if not cargo:
             return await interaction.response.send_message(f"❌ Erro: O cargo `{nome_cargo}` não existe no servidor. Avise a Staff!", ephemeral=True)
 
         if cargo in interaction.user.roles:
-            return await interaction.response.send_message("✅ Você já aceitou as regras e já é um Raider!", ephemeral=True)
+            return await interaction.response.send_message("✅ Você já aceitou as regras e já é um cidadão de Speranza!", ephemeral=True)
 
         try:
             await interaction.user.add_roles(cargo)
-            await interaction.response.send_message(f"🚀 Bem-vindo ao fronte, {interaction.user.name}! Você agora é um **{nome_cargo}**. Cuidado com os ARC's, outros raiders e boa sorte na extração!", ephemeral=True)
+            await interaction.response.send_message(f"🚀 Bem-vindo ao fronte, {interaction.user.name}! Você agora é um cidadão de **{nome_cargo}**. Cuidado com os ARC's, outros raiders e boa sorte na extração!", ephemeral=True)
             # Log opcional
             await enviar_log(interaction, f"✅ **Novo Membro**\n{interaction.user.mention} aceitou as regras.", 0x2ecc71)
         except discord.Forbidden:
