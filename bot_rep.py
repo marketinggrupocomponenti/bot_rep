@@ -427,49 +427,66 @@ async def avisar(ctx, membro: discord.Member, *, motivo: str = "Não especificad
 
 @bot.command()
 @eh_staff()
-async def say2(ctx, titulo: str, *, mensagem: str):
-    embed = discord.Embed(title=f"📢 {titulo}", description=mensagem, color=0xf1c40f)
-    embed.set_author(name="Comunidade ARC Raiders Brasil", icon_url=ctx.guild.icon.url if ctx.guild.icon else None)
-    embed.set_footer(text=f"Enviado por: {ctx.author.name}", icon_url=ctx.author.display_avatar.url)
-    
-    await ctx.message.delete() # Apaga o comando !say2 para limpar o chat
-    await ctx.send(content="@everyone", embed=embed)
-
-@bot.command()
-@eh_staff()
 async def colocar_botao(ctx):
     if isinstance(ctx.channel, discord.Thread):
         await ctx.send("Clique abaixo para finalizar esta troca:", view=FinalizarTrocaView())
     else:
         await ctx.send("Este comando só funciona dentro de um tópico!")
 
-@bot.command()
+@bot.command(aliases=['say', 'say2', 'anuncio'])
 @eh_staff()
-async def say(ctx, canal_destinatario=None, *, mensagem: str = None):
-    # Se o primeiro argumento for uma menção de canal ou ID numérico
-    if canal_destinatario:
-        # Tenta converter para um canal de texto
-        try:
-            converter = commands.TextChannelConverter()
-            target_channel = await converter.convert(ctx, canal_destinatario)
-            msg_final = mensagem
-        except:
-            # Se falhar a conversão, assume que o primeiro argumento já era parte da mensagem
-            target_channel = ctx.channel
-            msg_final = f"{canal_destinatario} {mensagem if mensagem else ''}"
+async def falar(ctx, tipo: str, *, mensagem: str = None):
+    """
+    Uso: 
+    !falar texto [mensagem] (Anexe uma foto se quiser)
+    !falar embed "Título" [mensagem] (Anexe uma foto se quiser)
+    """
+    if not mensagem and not ctx.message.attachments:
+        return await ctx.send("❌ Digite uma mensagem ou anexe uma imagem!", delete_after=10)
+
+    try: await ctx.message.delete()
+    except: pass
+
+    tipo = tipo.lower()
+    imagem_url = ctx.message.attachments[0].url if ctx.message.attachments else None
+
+    # --- OPÇÃO 1: TEXTO ---
+    if tipo == "texto":
+        # Se tiver imagem, envia a imagem com a mensagem na legenda
+        if imagem_url:
+            await ctx.send(content=f"{mensagem if mensagem else ''}\n\n_Enviado por: {ctx.author.mention}_", file=await ctx.message.attachments[0].to_file())
+        else:
+            await ctx.send(f"{mensagem}\n\n_Enviado por: {ctx.author.mention}_")
+        
+        await enviar_log(ctx, f"📢 **Mensagem de Texto**\n**Canal:** {ctx.channel.mention}", 0x9b59b6)
+
+    # --- OPÇÃO 2: EMBED ---
+    elif tipo == "embed":
+        # Lógica de Título entre aspas
+        if mensagem and '"' in mensagem:
+            partes = mensagem.split('"', 2)
+            titulo = partes[1]
+            conteudo = partes[2].strip()
+        else:
+            titulo = "Aviso Oficial"
+            conteudo = mensagem if mensagem else ""
+
+        embed = discord.Embed(title=f"📢 {titulo}", description=conteudo, color=0xf1c40f)
+        
+        if ctx.guild.icon:
+            embed.set_author(name="Comunidade ARC Raiders Brasil", icon_url=ctx.guild.icon.url)
+        
+        # Se houver anexo, coloca no "corpo" do embed
+        if imagem_url:
+            embed.set_image(url=imagem_url)
+            
+        embed.set_footer(text=f"Enviado por: {ctx.author.name}", icon_url=ctx.author.display_avatar.url)
+        
+        await ctx.send(content="@everyone", embed=embed)
+        await enviar_log(ctx, f"📢 **Anúncio em Embed**\n**Canal:** {ctx.channel.mention}\n**Título:** {titulo}", 0xf1c40f)
+
     else:
-        return await ctx.send("❌ Uso: `!say [#canal] [mensagem]` ou `!say [mensagem]`")
-
-    if not msg_final or msg_final.strip() == "":
-        return await ctx.send("❌ Você precisa digitar uma mensagem!")
-
-    try:
-        await ctx.message.delete()
-    except:
-        pass
-
-    await target_channel.send(msg_final)
-    await enviar_log(ctx, f"📢 **Comando !say**\n**Canal:** {target_channel.mention}\n**Conteúdo:** {msg_final}", 0x9b59b6)
+        await ctx.send("❌ Escolha `texto` ou `embed`.", delete_after=10)
 
 @bot.command()
 @eh_staff()
