@@ -245,7 +245,6 @@ async def ajuda(ctx):
         value=(
             "🚨 `!raid [mapa] 1` - Abre chamada para **DUO**.\n"
             "🚨 `!raid [mapa] 2` - Abre chamada para **TRIO**.\n"
-            "📩 `!postar_suporte` - Abre um ticket privado com a Staff."
         ),
         inline=False
     )
