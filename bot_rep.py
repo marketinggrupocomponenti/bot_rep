@@ -39,7 +39,7 @@ if not TOKEN:
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="/", intents=intents)
 
 # --- BANCO DE DADOS ---
 def get_db_connection():
@@ -231,10 +231,10 @@ async def ajuda(ctx):
     embed.add_field(
         name="📦 SISTEMA DE TROCAS",
         value=(
-            "🌟 `!rep @membro` - Dá +1 de reputação positiva.\n"
-            "💢 `!neg @membro` - Dá -1 de reputação negativa.\n"
-            "👤 `!perfil @membro` - Consulta a ficha e o status do raider.\n"
-            "🏆 `!top` - Exibe os 10 raiders mais confiáveis para trocas.\n\n"
+            "🌟 `/rep @membro` - Dá +1 de reputação positiva.\n"
+            "💢 `/neg @membro` - Dá -1 de reputação negativa.\n"
+            "👤 `/perfil @membro` - Consulta a ficha e o status do raider.\n"
+            "🏆 `/top` - Exibe os 10 raiders mais confiáveis para trocas.\n\n"
         ),
         inline=False
     )
@@ -243,8 +243,8 @@ async def ajuda(ctx):
     embed.add_field(
         name="📡 COMUNICAÇÃO DE RAID",
         value=(
-            "🚨 `!raid [mapa] 1` - Abre chamada para **DUO**.\n"
-            "🚨 `!raid [mapa] 2` - Abre chamada para **TRIO**.\n\n"
+            "🚨 `/raid [mapa] 1` - Abre chamada para **DUO**.\n"
+            "🚨 `/raid [mapa] 2` - Abre chamada para **TRIO**.\n\n"
         ),
         inline=False
     )
@@ -257,11 +257,11 @@ async def ajuda(ctx):
         embed.add_field(
             name="🛠️ PROTOCOLOS DE COMANDO (STAFF)",
             value=(
-                "📢 `!falar [texto/embed] [msg]` - Anúncios oficiais.\n"
-                "🧹 `!limpar [n]` - Faxina rápida no canal.\n"
-                "🚨 `!denunciar @membro [tipo] [motivo]` - Blacklist global.\n"
-                "📜 `!setrep @membro [pontos]` - Alterar reputação de algum raider.\n"
-                "⚙️ `!status` - Saúde do banco de dados e do bot.\n\n"
+                "📢 `/falar [texto/embed] [msg]` - Anúncios oficiais.\n"
+                "🧹 `/limpar [n]` - Faxina rápida no canal.\n"
+                "🚨 `/denunciar @membro [tipo] [motivo]` - Blacklist global.\n"
+                "📜 `/setrep @membro [pontos]` - Alterar reputação de algum raider.\n"
+                "⚙️ `/status` - Saúde do banco de dados e do bot.\n\n"
             ),
             inline=False
         )
@@ -282,7 +282,7 @@ async def ajuda(ctx):
 @bot.command()
 async def raid(ctx, mapa: str = None, vagas: int = None):
     if mapa is None or vagas is None:
-        return await ctx.send("❌ Uso: `!raid [mapa/objetivo] [vagas]` (1 para Duo, 2 para Trio)")
+        return await ctx.send("❌ Uso: `/raid [mapa/objetivo] [vagas]` (1 para Duo, 2 para Trio)")
     if ctx.channel.id != ID_CANAL_RAID:
         return await ctx.send(f"❌ Use em <#{ID_CANAL_RAID}>.", delete_after=5)
     if vagas < 1 or vagas > 2:
@@ -408,7 +408,7 @@ async def resetar(ctx, membro: discord.Member):
 async def limpar(ctx, quantidade: int = None):
     # Verifica se a quantidade foi informada
     if quantidade is None:
-        return await ctx.send("❌ Uso correto: `!limpar [quantidade]` (ex: `!limpar 10`)", delete_after=5)
+        return await ctx.send("❌ Uso correto: `/limpar [quantidade]` (ex: `!limpar 10`)", delete_after=5)
 
     # Limite de segurança para evitar abusos ou bugs do Discord
     if quantidade < 1 or quantidade > 100:
@@ -457,7 +457,7 @@ async def status(ctx):
     
     await ctx.send(embed=embed)
 
-@bot.command()
+@bot.command(aliases=['warn'])
 @eh_staff()
 async def avisar(ctx, membro: discord.Member, *, motivo: str = "Não especificado"):
     if membro.bot:
@@ -508,7 +508,7 @@ async def falar(ctx, tipo: str, *, mensagem: str = None):
 
     # --- MODO TEXTO ---
     if tipo == "texto":
-        texto_final = f"{mensagem if mensagem else ''}\n\n_Enviado por: {ctx.author.mention}_"
+        texto_final = f"{mensagem if mensagem else ''}\n_Enviado por: {ctx.author.mention}_"
         await ctx.send(content=texto_final, file=arquivo_copy)
         await enviar_log(ctx, f"📢 **Msg Texto** em {ctx.channel.mention}", 0x9b59b6)
 
@@ -548,7 +548,7 @@ async def denunciar(ctx, membro: discord.Member, tipo: str, *, motivo: str):
     # Padroniza o tipo
     tipo = tipo.lower()
     if tipo not in ['scam', 'hack', 'outros']:
-        return await ctx.send("❌ Tipo inválido! Use: `scam`, `hack` ou `outros`.\nEx: `!denunciar @membro hack Usou aimbot na extração`")
+        return await ctx.send("❌ Tipo inválido! Use: `scam`, `hack` ou `outros`.\nEx: `/denunciar @membro hack Usou aimbot na extração`")
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -634,7 +634,7 @@ async def postar_regras(ctx):
             "**3. TRAPAÇAS E HACKS**\n"
             "O uso de softwares de terceiros (Aimbot, Wallhack, etc) resultará em blacklist global no servidor e denunciado para os devs. Também não é permitido, mencionar o uso de qualquer um dos itens acima ou compartilhar links para acessar esse tipo de conteúdo.\n\n"
             "**4. CANAIS DE TROCA**\n"
-            "Use o sistema de reputação (`!rep`/`!neg`) para manter a segurança da comunidade.\n\n"
+            "Use o sistema de reputação (`/rep`/`/neg`) para manter a segurança da comunidade.\n\n"
             "**5. CONDUTA EM RAID**\n"
             "Seja um bom parceiro. Abandonar o squad propositalmente ou 'trollar' extrações gera má reputação.\n\n"
             "**6. SEM PUBLICIDADE**\n"
@@ -688,7 +688,7 @@ async def on_ready():
     if not manter_banco_vivo.is_running():
         manter_banco_vivo.start()
     print(f"✅ {bot.user.name} ONLINE!")
-    await bot.change_presence(activity=discord.Game(name="!ajuda | ARC Raiders Brasil"))
+    await bot.change_presence(activity=discord.Game(name="/ajuda | ARC Raiders Brasil"))
 
 class RegrasView(discord.ui.View):
     def __init__(self):
@@ -766,7 +766,7 @@ class TicketControlView(discord.ui.View):
         is_staff = any(role.name.lower() == "mods" for role in interaction.user.roles) or interaction.user.guild_permissions.administrator
         
         if not is_staff:
-            return await interaction.response.send_message("❌ Apenas a Staff pode encerrar tickets.", ephemeral=True)
+            return await interaction.response.send_message("❌ Apenas a staff pode encerrar tickets.", ephemeral=True)
             
         # Chama o Pop-up (Modal)
         await interaction.response.send_modal(MotivoFecharTicketModal())
@@ -860,10 +860,10 @@ async def on_thread_create(thread):
                 description=(
                     f"Olá {thread.owner.mention}, bem-vindo ao sistema de trocas!\n\n"
                     "**Dicas de Segurança:**\n"
-                    "1. Verifique a reputação de alguém usando o comando `!perfil @membro` antes fazer uma troca.\n"
-                    "2. Use o comando `!rep @membro` apenas após a troca ser concluída com sucesso.\n"
+                    "1. Verifique a reputação de alguém usando o comando `/perfil @membro` antes fazer uma troca.\n"
+                    "2. Use o comando `/rep @membro` apenas após a troca ser concluída com sucesso.\n"
                     "3. Após finalizada a troca, clique abaixo no botão para finalizar e excluir o tópico.\n"
-                    "4. Se por acaso for scammado, abra um ticket acionando nossos mods imediatamente e use o comando `!neg @membro` para negativar o raider.\n\n"
+                    "4. Se por acaso for scammado, abra um ticket acionando nossos mods imediatamente e use o comando `/neg @membro` para negativar o raider.\n\n"
                     "***RMT: Compra e venda de itens com dinheiro real é PROIBIDO e passivo de banimento aqui e no jogo, cuida.***\n\n"
                 ),
                 color=discord.Color.blue()
