@@ -41,6 +41,9 @@ ID_HUB_TRIO = 1486348629550825653 # Canal "➕ Criar TRIO"
 # IDs das Categorias onde as salas serão criadas
 ID_CAT_DUO = 1486347910885937242   # Categoria para DUOS
 ID_CAT_TRIO = 1486348090741883114  # Categoria para TRIOS
+CANAL_YOUTUBE_URL = "https://www.youtube.com/@ARCRaidersGame/videos"
+CANAL_SHORTS_URL = "https://www.youtube.com/@ARCRaidersGame/shorts"
+ULTIMO_VIDEO_ID = None
 
 if not TOKEN:
     print("❌ ERRO: DISCORD_TOKEN não encontrado!")
@@ -169,6 +172,46 @@ async def monitorar_noticias_pro():
 
         except Exception as e:
             print(f"❌ CRITICAL ERROR NO MONITOR: {e}")
+
+@tasks.loop(minutes=15)
+async def monitorar_youtube_arc():
+    global ULTIMO_VIDEO_ID
+    print(f"--- [LOG YT] Verificando novos vídeos e shorts ---")
+    
+    urls_para_checar = [CANAL_YOUTUBE_URL, CANAL_SHORTS_URL]
+    
+    async with aiohttp.ClientSession() as session:
+        for url in urls_para_checar:
+            try:
+                # User-agent para evitar ser bloqueado como bot básico
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status != 200: continue
+                    
+                    html = await resp.text()
+                    # Procura por IDs de vídeo no formato "videoId":"ID_DO_VIDEO"
+                    video_ids = re.findall(r'"videoId":"([^"]+)"', html)
+                    
+                    if not video_ids: continue
+                    
+                    video_recente = video_ids[0]
+                    
+                    # Se for o mesmo vídeo de antes, pula para a próxima URL
+                    if video_recente == ULTIMO_VIDEO_ID: continue
+                    
+                    ULTIMO_VIDEO_ID = video_recente
+                    link_final = f"https://www.youtube.com/watch?v={video_recente}"
+                    
+                    # Canal de Mídia ID: 1412423357382529098
+                    canal_midia = bot.get_channel(1412423357382529098)
+                    if canal_midia:
+                        tipo = "Shorts" if "shorts" in url else "Vídeo"
+                        await canal_midia.send(f"🎬 **Novo {tipo} detectado no canal oficial!**\n{link_final}")
+                        print(f"✅ Novo {tipo} postado: {video_recente}")
+                        break # Para após postar o mais recente para não floodar
+                        
+            except Exception as e:
+                print(f"❌ Erro ao monitorar YouTube: {e}")
 
 # --- BANCO DE DADOS ---
 def get_db_connection():
@@ -813,6 +856,7 @@ async def on_ready():
     bot.add_view(RegrasView())
     bot.add_view(AbrirTicketView())
     bot.add_view(TicketControlView())
+    monitorar_youtube_arc.start()
     if not monitorar_noticias_pro.is_running():
         monitorar_noticias_pro.start()
     if not manter_banco_vivo.is_running():
