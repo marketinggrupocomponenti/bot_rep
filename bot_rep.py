@@ -59,11 +59,14 @@ URL_NEWS = "https://arcraiders.com/news"
 ULTIMA_NOTICIA_URL = None
 
 # --- TRADUTOR DE NOTÍCIAS DO SITE ---
-@tasks.loop(minutes=15)
+@tasks.loop(minutes=30)
 async def monitorar_noticias_completo():
     global ULTIMA_NOTICIA_URL
     
-    async with aiohttp.ClientSession() as session:
+    # Timeout de 30 segundos para evitar que o bot trave esperando o site
+    timeout = aiohttp.ClientTimeout(total=30)
+    
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
             async with session.get(URL_NEWS) as response:
                 if response.status != 200: return
@@ -71,86 +74,86 @@ async def monitorar_noticias_completo():
                 html = await response.text()
                 soup = BeautifulSoup(html, 'html.parser')
                 
-                # Localiza a primeira notícia
-                link_noticia = soup.find('a', href=True, class_=lambda x: x and 'NewsCard' in x)
-                if not link_noticia: return
+                # Procura o link da notícia (ajustado para ser mais genérico)
+                link_noticia = soup.find('a', href=True) # Busca o primeiro link com href
+                # Filtra apenas links que contenham '/news/' no caminho
+                links_news = [a for a in soup.find_all('a', href=True) if '/news/' in a['href']]
                 
-                url_relativa = link_noticia['href']
+                if not links_news: return
+                
+                url_relativa = links_news[0]['href']
                 url_completa = f"{URL_BASE}{url_relativa}" if url_relativa.startswith('/') else url_relativa
                 
-                # Verifica se é nova
                 if url_completa == ULTIMA_NOTICIA_URL: return
                 ULTIMA_NOTICIA_URL = url_completa
 
-                # --- ENTRA NA NOTÍCIA PARA PEGAR O CONTEÚDO INTERNO ---
+                # --- ENTRA NA NOTÍCIA ---
                 async with session.get(url_completa) as resp_interna:
                     if resp_interna.status != 200: return
                     
                     html_interno = await resp_interna.text()
                     soup_int = BeautifulSoup(html_interno, 'html.parser')
                     
-                    # Extração de Dados
-                    titulo_en = soup_int.find('h1').text.strip() if soup_int.find('h1') else "Nova Atualização"
+                    # Busca Título (Tenta H1 ou o primeiro H2 se falhar)
+                    titulo_tag = soup_int.find('h1') or soup_int.find('h2')
+                    titulo_en = titulo_tag.text.strip() if titulo_tag else "Nova Atualização ARC Raiders"
                     
-                    # Pega o corpo da notícia (geralmente dentro de uma div de conteúdo)
-                    corpo_noticia = soup_int.find('div', class_=lambda x: x and 'Content' in x) or soup_int.find('article')
+                    # Busca Conteúdo (Tenta focar na tag <article> que é padrão)
+                    corpo_noticia = soup_int.find('article') or soup_int.find('main')
                     
                     texto_completo_en = ""
-                    midias = [] # Para guardar imagens e vídeos extras
+                    midias = []
 
                     if corpo_noticia:
-                        # Extrai parágrafos
-                        for p in corpo_noticia.find_all(['p', 'h2', 'h3']):
-                            texto_completo_en += p.text + "\n\n"
+                        # Extrai apenas parágrafos reais para não poluir
+                        paragrafos = corpo_noticia.find_all('p')
+                        for p in paragrafos[:10]: # Limite de 10 parágrafos para não estourar o Discord
+                            if len(p.text) > 10:
+                                texto_completo_en += p.text + "\n\n"
                         
-                        # Extrai Imagens e Vídeos
+                        # Busca Imagens (Pega o 'src' de todas as imgs dentro do artigo)
                         for img in corpo_noticia.find_all('img'):
-                            if img.get('src') and img['src'] not in midias:
-                                midias.append(img['src'])
-                        
-                        for video in corpo_noticia.find_all('iframe'):
-                            if video.get('src'):
-                                midias.append(video['src'])
+                            src = img.get('src') or img.get('data-src')
+                            if src and src.startswith('http') and src not in midias:
+                                midias.append(src)
 
-                    # --- TRADUÇÃO ---
+                    # --- TRADUÇÃO SEGURA ---
                     tradutor = GoogleTranslator(source='en', target='pt')
-                    titulo_pt = tradutor.translate(titulo_en)
                     
-                    # Traduz o texto em pedaços (Google tem limite de 5000 chars por tradução)
+                    # Traduz o título
+                    titulo_pt = tradutor.translate(titulo_en) if titulo_en else "Nova Notícia"
+                    
+                    # Traduz o texto (Limita a 2000 caracteres para o Discord não rejeitar)
                     texto_pt = ""
                     if texto_completo_en:
-                        # Divide o texto se for muito grande
-                        partes = [texto_completo_en[i:i+4500] for i in range(0, len(texto_completo_en), 4500)]
-                        for p in partes:
-                            texto_pt += tradutor.translate(p)
+                        resumo = texto_completo_en[:2000] # Garante que não trava na tradução
+                        texto_pt = tradutor.translate(resumo)
+                    else:
+                        texto_pt = "Confira os detalhes completos no site oficial."
 
-                    # --- ENVIO PARA O DISCORD ---
+                    # --- ENVIO ---
                     canal = bot.get_channel(CANAL_NOTICIAS_ID)
                     if canal:
-                        # Embed Principal
                         embed = discord.Embed(
                             title=f"🚨 {titulo_pt}",
-                            description=texto_pt[:4000] if texto_pt else "Clique no link abaixo para ler os detalhes.",
-                            url=url_completa,
+                            description=f"{texto_pt}\n\n🔗 [Leia o artigo original]({url_completa})",
                             color=0x3498db,
                             timestamp=datetime.now()
                         )
                         
                         if midias:
-                            # A primeira mídia vai no destaque do embed
                             embed.set_image(url=midias[0])
                         
-                        embed.set_footer(text="Tradução Automática • ARC Raiders Brasil")
+                        embed.set_footer(text="ARC Raiders Brasil • Tradutor Tático")
                         
-                        await canal.send(content="@everyone", embed=embed)
-
-                        # Se houver mais mídias (outras imagens ou vídeos), envia logo abaixo
-                        if len(midias) > 1:
-                            for m in midias[1:5]: # Limite de 5 extras para não floodar
-                                await canal.send(content=f"📸 Mídia extra da notícia: {m}")
+                        msg = await canal.send(content="@everyone", embed=embed)
+                        
+                        # Adiciona reações automáticas para engajamento
+                        await msg.add_reaction("🔥")
+                        await msg.add_reaction("🛰️")
 
         except Exception as e:
-            print(f"❌ Erro no Monitor de Notícias: {e}")
+            print(f"⚠️ Erro silencioso no Monitor: {e}") # Não deixa o bot crashar o deploy
 
 # --- BANCO DE DADOS ---
 def get_db_connection():
