@@ -5,13 +5,14 @@ from discord.ext import commands, tasks
 import psycopg2
 from dotenv import load_dotenv
 import requests
-from datetime import datetime
 import io
 import asyncio
+import re
 import aiohttp
 from bs4 import BeautifulSoup
 from discord.ext import tasks
 from deep_translator import GoogleTranslator
+from datetime import datetime
 
 # --- CONFIGURAÇÕES ---
 def carregar_config():
@@ -54,106 +55,120 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 
 # IDs de Configuração
 CANAL_NOTICIAS_ID = 1412423357541908524
+CANAL_MIDIA_ID = 1412423357382529098
 URL_BASE = "https://arcraiders.com"
 URL_NEWS = "https://arcraiders.com/news"
 ULTIMA_NOTICIA_URL = None
 
-# --- TRADUTOR DE NOTÍCIAS DO SITE ---
-@tasks.loop(minutes=30)
-async def monitorar_noticias_completo():
+# --- TRADUTOR DE NOTÍCIAS DO SITE E EXTRATOR DE MÍDIAS OFICIAIS ---
+@tasks.loop(minutes=15)
+async def monitorar_noticias_pro():
     global ULTIMA_NOTICIA_URL
     
-    # Timeout de 30 segundos para evitar que o bot trave esperando o site
-    timeout = aiohttp.ClientTimeout(total=30)
+    print(f"--- [LOG {datetime.now().strftime('%H:%M:%S')}] Iniciando varredura no site oficial ---")
     
+    timeout = aiohttp.ClientTimeout(total=40)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
             async with session.get(URL_NEWS) as response:
-                if response.status != 200: return
+                if response.status != 200:
+                    print(f"⚠️ Erro ao acessar o site: Status {response.status}")
+                    return
                 
                 html = await response.text()
                 soup = BeautifulSoup(html, 'html.parser')
                 
-                # Procura o link da notícia (ajustado para ser mais genérico)
-                link_noticia = soup.find('a', href=True) # Busca o primeiro link com href
-                # Filtra apenas links que contenham '/news/' no caminho
+                # Identifica links de notícias
                 links_news = [a for a in soup.find_all('a', href=True) if '/news/' in a['href']]
                 
-                if not links_news: return
+                if not links_news:
+                    print("🔍 Nenhuma notícia encontrada no feed principal.")
+                    return
                 
                 url_relativa = links_news[0]['href']
                 url_completa = f"{URL_BASE}{url_relativa}" if url_relativa.startswith('/') else url_relativa
                 
-                if url_completa == ULTIMA_NOTICIA_URL: return
+                if url_completa == ULTIMA_NOTICIA_URL:
+                    print("✅ Nenhuma novidade. O site continua com a mesma notícia no topo.")
+                    return
+                
+                print(f"🆕 NOVA NOTÍCIA DETECTADA: {url_completa}")
                 ULTIMA_NOTICIA_URL = url_completa
 
-                # --- ENTRA NA NOTÍCIA ---
+                # --- ENTRANDO NA NOTÍCIA ---
                 async with session.get(url_completa) as resp_interna:
-                    if resp_interna.status != 200: return
-                    
                     html_interno = await resp_interna.text()
                     soup_int = BeautifulSoup(html_interno, 'html.parser')
                     
-                    # Busca Título (Tenta H1 ou o primeiro H2 se falhar)
                     titulo_tag = soup_int.find('h1') or soup_int.find('h2')
-                    titulo_en = titulo_tag.text.strip() if titulo_tag else "Nova Atualização ARC Raiders"
+                    titulo_en = titulo_tag.text.strip() if titulo_tag else "Nova Atualização"
                     
-                    # Busca Conteúdo (Tenta focar na tag <article> que é padrão)
-                    corpo_noticia = soup_int.find('article') or soup_int.find('main')
+                    corpo = soup_int.find('article') or soup_int.find('main')
                     
-                    texto_completo_en = ""
-                    midias = []
+                    texto_en = ""
+                    links_video = []
+                    links_imagem = []
 
-                    if corpo_noticia:
-                        # Extrai apenas parágrafos reais para não poluir
-                        paragrafos = corpo_noticia.find_all('p')
-                        for p in paragrafos[:10]: # Limite de 10 parágrafos para não estourar o Discord
-                            if len(p.text) > 10:
-                                texto_completo_en += p.text + "\n\n"
+                    if corpo:
+                        # Extração de texto
+                        for p in corpo.find_all('p')[:8]:
+                            if len(p.text) > 20: texto_en += p.text + "\n\n"
                         
-                        # Busca Imagens (Pega o 'src' de todas as imgs dentro do artigo)
-                        for img in corpo_noticia.find_all('img'):
-                            src = img.get('src') or img.get('data-src')
-                            if src and src.startswith('http') and src not in midias:
-                                midias.append(src)
+                        # Extração de Vídeos (Youtube/Shorts/Vimeo)
+                        for iframe in corpo.find_all('iframe'):
+                            src = iframe.get('src', '')
+                            if any(x in src for x in ['youtube.com', 'youtu.be', 'vimeo.com']):
+                                video_clean = src.split('?')[0].replace('embed/', 'watch?v=')
+                                links_video.append(video_clean)
 
-                    # --- TRADUÇÃO SEGURA ---
+                        for a in corpo.find_all('a', href=True):
+                            href = a['href']
+                            if 'youtube.com/shorts/' in href or 'youtu.be/' in href:
+                                if href not in links_video: links_video.append(href)
+
+                        # Extração de Imagens
+                        for img in corpo.find_all('img'):
+                            img_src = img.get('src') or img.get('data-src')
+                            if img_src and img_src.startswith('http') and not any(x in img_src for x in ['icon', 'logo']):
+                                links_imagem.append(img_src)
+
+                    print(f"📊 Dados coletados: {len(texto_en)} caracteres de texto, {len(links_video)} vídeos, {len(links_imagem)} imagens.")
+
+                    # --- TRADUÇÃO ---
                     tradutor = GoogleTranslator(source='en', target='pt')
-                    
-                    # Traduz o título
-                    titulo_pt = tradutor.translate(titulo_en) if titulo_en else "Nova Notícia"
-                    
-                    # Traduz o texto (Limita a 2000 caracteres para o Discord não rejeitar)
-                    texto_pt = ""
-                    if texto_completo_en:
-                        resumo = texto_completo_en[:2000] # Garante que não trava na tradução
-                        texto_pt = tradutor.translate(resumo)
-                    else:
-                        texto_pt = "Confira os detalhes completos no site oficial."
+                    titulo_pt = tradutor.translate(titulo_en)
+                    resumo_pt = tradutor.translate(texto_en[:2000]) if texto_en else "Confira os detalhes no site oficial."
 
-                    # --- ENVIO ---
-                    canal = bot.get_channel(CANAL_NOTICIAS_ID)
-                    if canal:
+                    # --- POSTAGEM: CANAL NOTÍCIAS ---
+                    canal_news = bot.get_channel(CANAL_NOTICIAS_ID)
+                    if canal_news:
                         embed = discord.Embed(
                             title=f"🚨 {titulo_pt}",
-                            description=f"{texto_pt}\n\n🔗 [Leia o artigo original]({url_completa})",
+                            description=f"{resumo_pt}\n\n🔗 [Artigo Original]({url_completa})",
                             color=0x3498db,
                             timestamp=datetime.now()
                         )
-                        
-                        if midias:
-                            embed.set_image(url=midias[0])
-                        
-                        embed.set_footer(text="ARC Raiders Brasil • Tradutor Tático")
-                        
-                        msg = await canal.send(content="@everyone", embed=embed)
-                        
-                        # Adiciona reações automáticas para engajamento
+                        if links_imagem: embed.set_image(url=links_imagem[0])
+                        msg = await canal_news.send(content="@everyone", embed=embed)
                         await msg.add_reaction("🔥")
-                        await msg.add_reaction("🛰️")
+                        print("📡 Mensagem de texto enviada para o canal de notícias.")
+
+                    # --- POSTAGEM: CANAL MÍDIA ---
+                    canal_midia = bot.get_channel(CANAL_MIDIA_ID)
+                    if canal_midia and (links_video or len(links_imagem) > 1):
+                        await canal_midia.send(f"🎬 **Mídias da Atualização:** *{titulo_pt}*")
+                        
+                        for vid in links_video:
+                            await canal_midia.send(vid)
+                            print(f"🎥 Vídeo postado: {vid}")
+                        
+                        if len(links_imagem) > 1:
+                            for img_extra in links_imagem[1:4]:
+                                await canal_midia.send(img_extra)
+                        print("📸 Mídias extras (vídeos/fotos) enviadas para o canal de mídia.")
 
         except Exception as e:
-            print(f"⚠️ Erro silencioso no Monitor: {e}") # Não deixa o bot crashar o deploy
+            print(f"❌ CRITICAL ERROR NO MONITOR: {e}")
 
 # --- BANCO DE DADOS ---
 def get_db_connection():
@@ -798,10 +813,11 @@ async def on_ready():
     bot.add_view(RegrasView())
     bot.add_view(AbrirTicketView())
     bot.add_view(TicketControlView())
-    
+    if not monitorar_noticias_pro.is_running():
+        monitorar_noticias_pro.start()
     if not manter_banco_vivo.is_running():
         manter_banco_vivo.start()
-    print(f"✅ {bot.user.name} ONLINE!")
+    print(f"✅ {bot.user.name} Bot Online!")
     await bot.change_presence(activity=discord.Game(name="/ajuda | ARC Raiders Brasil"))
 
 class RegrasView(discord.ui.View):
