@@ -662,9 +662,9 @@ async def falar(ctx, tipo: str, *, mensagem: str = None):
         if arquivo_copy:
             # O nome do arquivo no anexo deve ser o mesmo usado no set_image
             embed.set_image(url=f"attachment://{arquivo_copy.filename}")
-            await ctx.send(content="@everyone", embed=embed, file=arquivo_copy)
+            await ctx.send(content=embed=embed, file=arquivo_copy)
         else:
-            await ctx.send(content="@everyone", embed=embed)
+            await ctx.send(content=embed=embed)
             
         await enviar_log(ctx, f"📢 **Anúncio Embed** em {ctx.channel.mention}\nTítulo: {titulo}", 0xf1c40f)
 
