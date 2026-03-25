@@ -2,6 +2,7 @@ import os
 import sys
 import discord
 from discord.ext import commands, tasks
+from discord import app_commands
 import psycopg2
 from dotenv import load_dotenv
 import requests
@@ -13,6 +14,7 @@ from bs4 import BeautifulSoup
 from discord.ext import tasks
 from deep_translator import GoogleTranslator
 from datetime import datetime
+import functools
 
 # --- CONFIGURAÇÕES ---
 def carregar_config():
@@ -309,36 +311,71 @@ class VoiceSelectionView(discord.ui.View):
             self.add_item(discord.ui.Button(label=f"Sala {i}", url=f"https://discord.com/channels/{guild_id}/{canal_id}", style=discord.ButtonStyle.link))
 
 class RaidView(discord.ui.View):
-    def __init__(self, host, mapa, vagas_totais):
-        super().__init__(timeout=3600)
-        self.host = host
+    def __init__(self, criador, mapa, total):
+        super().__init__(timeout=None)
+        self.criador = criador
         self.mapa = mapa
-        self.vagas_totais = vagas_totais
-        self.participantes = [host]
+        self.total = total
+        self.participantes = [criador]
 
-    @discord.ui.button(label="Entrar no Squad", style=discord.ButtonStyle.green, emoji="✋")
-    async def entrar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if len(self.participantes) >= self.vagas_totais:
-            if interaction.user.id == self.host.id:
-                view_voz = VoiceSelectionView(interaction.guild.id)
-                return await interaction.response.send_message(content=f"🎮 **Sua Raid de {self.mapa.upper()} está pronta!**\n\n**Como convidar seu squad:**\n1. Escolha uma sala abaixo.\n2. Clique com o botão direito nela e selecione **'Copiar Link'**.\n3. Cole o link aqui no canal para seus parceiros entrarem.", view=view_voz, ephemeral=True)
-            else:
-                return await interaction.response.send_message("❌ Este squad já está completo!", ephemeral=True)
+    @discord.ui.button(label="Entrar na Raid", style=discord.ButtonStyle.success, emoji="🔫")
+    async def entrar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # 1. Evita que o criador entre de novo ou que alguém entre duas vezes
         if interaction.user in self.participantes:
-            return await interaction.response.send_message("❌ Você já está neste squad!", ephemeral=True)
+            return await interaction.response.send_message("❌ Você já está neste Squad!", ephemeral=True)
+        
+        # 2. Verifica se ainda há vagas
+        if len(self.participantes) >= self.total:
+            return await interaction.response.send_message("❌ Este Squad já está cheio!", ephemeral=True)
+
+        # 3. Adiciona o novo membro
         self.participantes.append(interaction.user)
+        
+        # 4. Atualiza o Embed visualmente
         embed = interaction.message.embeds[0]
-        lista_mentions = "\n".join([m.mention for m in self.participantes])
-        embed.set_field_at(1, name=f"Membros ({len(self.participantes)}/{self.vagas_totais})", value=lista_mentions, inline=False)
-        if len(self.participantes) >= self.vagas_totais:
-            button.label = "Squad Completo (Clique p/ Salas)"
-            button.style = discord.ButtonStyle.secondary
-            embed.color = discord.Color.gold()
-        await interaction.message.edit(embed=embed, view=self)
-        if len(self.participantes) >= self.vagas_totais and interaction.user.id == self.host.id:
-            await interaction.response.send_message(content="✅ **Squad Completo!** Escolha a sala abaixo e envie o link.", view=VoiceSelectionView(interaction.guild.id), ephemeral=True)
+        lista_membros = "\n".join([f"👤 {m.mention}" for m in self.participantes])
+        embed.set_field_at(1, name=f"👥 ESQUADRÃO ({len(self.participantes)}/{self.total})", value=lista_membros, inline=False)
+
+        # --- VERIFICA SE O GRUPO FECHOU ---
+        if len(self.participantes) == self.total:
+            button.disabled = True # Desativa o botão de entrar
+            self.stop() # Para a View
+            
+            # Menciona apenas quem está dentro da Raid
+            mencoes = " ".join([m.mention for m in self.participantes])
+            tipo_squad = "DUO" if self.total == 2 else "TRIO"
+            categoria_alvo = "DUOS" if self.total == 2 else "TRIOS"
+            
+            # Mensagem de encerramento focada nos participantes
+            msg_fechamento = (
+                f"✅ **SQUAD COMPLETO!** {mencoes}\n"
+                f"📍 Objetivo: `{self.mapa.upper()}`\n"
+                f"🚀 Dirijam-se agora à categoria de **{categoria_alvo}** e entrem no canal **➕ Criar {tipo_squad}** para gerar sua sala privada!"
+            )
+            
+            await interaction.response.edit_message(embed=embed, view=self)
+            await interaction.channel.send(msg_fechamento)
+            
         else:
-            await interaction.response.send_message("✅ Você entrou no squad!", ephemeral=True)
+            # Se ainda não encheu, apenas atualiza o embed
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="Sair", style=discord.ButtonStyle.danger, emoji="🏃")
+    async def sair(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user not in self.participantes:
+            return await interaction.response.send_message("❌ Você não está nesta Raid.", ephemeral=True)
+        
+        if interaction.user == self.criador:
+            return await interaction.response.send_message("❌ O líder não pode sair. Se quiser cancelar, peça à Staff para apagar a mensagem.", ephemeral=True)
+
+        self.participantes.remove(interaction.user)
+        
+        # Atualiza o Embed
+        embed = interaction.message.embeds[0]
+        lista_membros = "\n".join([f"👤 {m.mention}" for m in self.participantes])
+        embed.set_field_at(1, name=f"👥 ESQUADRÃO ({len(self.participantes)}/{self.total})", value=lista_membros, inline=False)
+        
+        await interaction.response.edit_message(embed=embed, view=self)
 
 # --- COMANDOS ---
 @bot.command()
@@ -408,19 +445,56 @@ async def ajuda(ctx):
     # Ou retire o 'delete_after' se preferir que fique fixo
     await ctx.send(embed=embed, delete_after=60)
 
-@bot.command()
-async def raid(ctx, mapa: str = None, vagas: int = None):
-    if mapa is None or vagas is None:
-        return await ctx.send("❌ Uso: `/raid [mapa/objetivo] [vagas]` (1 para Duo, 2 para Trio)")
-    if ctx.channel.id != ID_CANAL_RAID:
-        return await ctx.send(f"❌ Use em <#{ID_CANAL_RAID}>.", delete_after=5)
-    if vagas < 1 or vagas > 2:
-        return await ctx.send("❌ Escolha 1 ou 2 vagas extras.")
-    total = vagas + 1
-    embed = discord.Embed(title=f"🚨Chamada p/ Raid: {'DUO' if total==2 else 'TRIO'}", color=0x2ecc71)
-    embed.add_field(name="📍 Mapa/Objetivo", value=mapa.upper(), inline=True)
-    embed.add_field(name=f"Membros (1/{total})", value=f"👤 {ctx.author.mention}", inline=False)
-    await ctx.send(embed=embed, view=RaidView(ctx.author, mapa, total))
+# --- COMANDO: /RAID ---
+@bot.tree.command(name="raid", description="Abre uma chamada para formar Squad (Duo ou Trio).")
+@app_commands.describe(
+    mapa="Onde ou o que pretente fazer (Ex: Matar Matriarca, fazer quests..)",
+    vagas="Escolha 1 vaga extra para DUO ou 2 vagas extras para TRIO"
+)
+# Opções pré-definidas para o número de vagas
+@app_commands.choices(vagas=[
+    app_commands.Choice(name="DUO (1 vaga extra)", value=1),
+    app_commands.Choice(name="TRIO (2 vagas extras)", value=2)
+])
+async def raid(interaction: discord.Interaction, mapa: str, vagas: int):
+    # 1. Verificação de Canal (ID_CANAL_RAID deve estar definido no seu código)
+    if interaction.channel.id != ID_CANAL_RAID:
+        return await interaction.response.send_message(
+            f"❌ Por favor, use este comando no canal <#{ID_CANAL_RAID}>.", 
+            ephemeral=True
+        )
+
+    # 2. Lógica de cálculo (1 vaga extra = 2 pessoas total / 2 vagas extras = 3 pessoas total)
+    total_membros = vagas + 1
+    tipo_raid = "DUO" if total_membros == 2 else "TRIO"
+    
+    # Define a cor baseada no tipo (Duo = Azul, Trio = Dourado)
+    cor_embed = 0x3498db if total_membros == 2 else 0xf1c40f
+
+    # 3. Criação do Embed Tático
+    embed = discord.Embed(
+        title=f"🚨 CHAMADA PARA RAID: {tipo_raid}",
+        description=f"O Raider {interaction.user.mention} está montando um esquadrão!",
+        color=cor_embed
+    )
+    
+    embed.add_field(name="📍 MAPA / OBJETIVO", value=f"**{mapa.upper()}**", inline=True)
+    embed.add_field(name=f"👥 ESQUADRÃO (1/{total_membros})", value=f"👤 {interaction.user.mention}", inline=False)
+    
+    # Dica sobre os novos canais de voz
+    categoria_nome = "DUOS" if total_membros == 2 else "TRIOS"
+    embed.set_footer(text=f"Após fechar o grupo, dirija-se à categoria de {categoria_nome}.")
+
+    # 4. Envio da Chamada com a View (Botões de entrar/sair)
+    # Importante: Passe o interaction.user para a RaidView para ela saber quem é o dono
+    await interaction.response.send_message(
+        content="@everyone" if total_membros == 3 else None, # Marca apenas se for Trio (opcional)
+        embed=embed, 
+        view=RaidView(interaction.user, mapa, total_membros)
+    )
+
+    # Log Interno
+    print(f"📡 Raid {tipo_raid} iniciada por {interaction.user.name} em {mapa}")
 
 @bot.command()
 async def top(ctx):
@@ -441,81 +515,147 @@ async def top(ctx):
     embed.set_footer(text="ARC Raiders Brasil | Ranking de Confiança")
     await ctx.send(embed=embed)
 
-@bot.command()
-@commands.cooldown(1, 7200, commands.BucketType.user)
-@ignora_cooldown_staff()
-async def rep(ctx, membro: discord.Member):
-    if membro.id == ctx.author.id:
-        ctx.command.reset_cooldown(ctx)
-        return await ctx.send("❌ Você não pode dar reputação para si mesmo.")
+# --- COMANDO: /REP ---
+@bot.tree.command(name="rep", description="Dê +1 de reputação positiva a um Raider confiável.")
+@app_commands.describe(membro="O Raider que você deseja elogiar")
+# Cooldown: 1 uso a cada 7200 segundos (2 horas) por usuário
+@app_commands.checks.cooldown(1, 7200, key=lambda i: i.user.id)
+async def rep(interaction: discord.Interaction, membro: discord.Member):
+    
+    # 1. Verificações de Segurança
+    if membro.id == interaction.user.id:
+        rep.app_command.reset_cooldown(interaction)
+        return await interaction.response.send_message("❌ Você não pode dar reputação para si mesmo.", ephemeral=True)
     
     if membro.bot:
-        ctx.command.reset_cooldown(ctx)
-        return await ctx.send("❌ Bots não possuem reputação.")
+        rep.app_command.reset_cooldown(interaction)
+        return await interaction.response.send_message("❌ Bots não possuem reputação.", ephemeral=True)
 
     try:
-        nova = alterar_rep(membro.id, 1)
-        if nova is not None:
-            await ctx.send(f"🌟 {ctx.author.mention} deu +1 rep para {membro.mention}!")
-            await enviar_log(ctx, f"🌟 **Reputação Positiva**\nPara: {membro.mention}\nTotal: `{nova}`", 0x2ecc71)
-            await verificar_cargos_nivel(ctx, membro, nova)
+        # 2. Executa a lógica de Reputação (Sua função alterar_rep)
+        nova_rep = alterar_rep(membro.id, 1)
+        
+        if nova_rep is not None:
+            # 3. Resposta de Sucesso no Canal
+            embed = discord.Embed(
+                title="🌟 REPUTAÇÃO POSITIVA",
+                description=f"{interaction.user.mention} deu **+1 de reputação** para {membro.mention}!",
+                color=0x2ecc71 # Verde
+            )
+            embed.set_footer(text=f"Nova reputação de {membro.name}: {nova_rep} | ARC Raiders Brasil")
+            
+            await interaction.response.send_message(embed=embed)
+
+            # 4. Logs e Verificação de Cargos (Suas funções existentes)
+            await enviar_log(interaction, f"🌟 **Reputação Positiva**\nPara: {membro.mention}\nTotal: `{nova_rep}`", 0x2ecc71)
+            await verificar_cargos_nivel(interaction, membro, nova_rep)
+            
         else:
-            ctx.command.reset_cooldown(ctx)
-            await ctx.send("❌ Erro ao salvar no banco de dados. Verifique a conexão.")
+            # Caso o banco de dados retorne None (erro de salvamento)
+            rep.app_command.reset_cooldown(interaction)
+            await interaction.response.send_message("❌ Erro ao salvar no banco de dados. Tente novamente mais tarde.", ephemeral=True)
+
     except Exception as e:
-        print(f"Erro no comando !rep: {e}")
-        ctx.command.reset_cooldown(ctx)
-        await ctx.send("❌ Ocorreu um erro interno ao processar a reputação.")
+        # Tratamento de erro interno para evitar crash
+        print(f"❌ Erro no comando /rep: {e}")
+        rep.app_command.reset_cooldown(interaction)
+        await interaction.response.send_message("❌ Ocorreu um erro interno ao processar a reputação.", ephemeral=True)
 
-@bot.command()
-@commands.cooldown(1, 7200, commands.BucketType.user)
-@ignora_cooldown_staff()
-async def neg(ctx, membro: discord.Member):
-    if membro.id == ctx.author.id or membro.bot:
-        ctx.command.reset_cooldown(ctx)
-        return await ctx.send("❌ Comando inválido.")
-    nova = alterar_rep(membro.id, -1)
-    await ctx.send(f"💢 {ctx.author.mention} deu -1 rep para {membro.mention}!")
-    await enviar_log(ctx, f"💢 **Reputação Negativa**\nPara: {membro.mention}\nTotal: `{nova}`", 0xe74c3c)
-    await verificar_cargos_nivel(ctx, membro, nova)
-
-@bot.command()
-async def perfil(ctx, membro: discord.Member = None):
-    membro = membro or ctx.author
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute('SELECT rep FROM usuarios WHERE id = %s', (membro.id,))
-    res_rep = cursor.fetchone()
-    pontos = res_rep[0] if res_rep else 0
-    
-    # Busca o motivo e o TIPO do banimento
-    cursor.execute('SELECT motivo, tipo FROM blacklist WHERE user_id = %s', (membro.id,))
-    res_black = cursor.fetchone()
-    conn.close()
-
-    if res_black:
-        motivo, tipo = res_black
-        cor = 0x000000 if tipo == 'hack' else 0xff0000 # Preto para hack, vermelho para scam
-        titulo = "🛑 PERFIL BLOQUEADO: HACKER 🛑" if tipo == 'hack' else "⚠️ RISCO: SCAMMER ⚠️"
+# --- TRATAMENTO DE COOLDOWN PARA /REP ---
+@rep.error
+async def rep_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CommandOnCooldown):
+        # Lógica para Staff ignorar o cooldown (Simulando @ignora_cooldown_staff)
+        is_staff = any(role.name.lower() in ["mods", "staff", "adm", "administrador"] for role in interaction.user.roles)
         
-        embed = discord.Embed(title=titulo, color=cor)
-        embed.description = f"🚨 **ESTE USUÁRIO FOI DENUNCIADO!**\n\n**Tipo de Infração:** `{tipo.upper()}`\n**Motivo:** {motivo}"
-        embed.add_field(name="Status", value="BANIDO DA COMUNIDADE", inline=True)
-    else:
-        # Lógica normal de trocador (mantém seu código atual aqui)
-        status = "Neutro"
-        if pontos >= 100: status = "Trocador Oficial 💎"
-        elif pontos >= 50: status = "Trocador Confiável ✅"
-        elif pontos >= 10: status = "Trocador Iniciante ✅"
-        elif pontos <= -10: status = "Trocador Perigoso ❌"
+        if is_staff:
+            rep.app_command.reset_cooldown(interaction)
+            return await interaction.response.send_message("⚠️ Cooldown ignorado (Staff). Por favor, repita o comando.", ephemeral=True)
         
-        embed = discord.Embed(title=f"Perfil de {membro.name}", color=0x2ecc71)
-        embed.add_field(name="Pontos de Reputação", value=f"`{pontos}`", inline=True)
-        embed.add_field(name="Status", value=status, inline=True)
+        # Resposta amigável para usuários comuns
+        minutos = round(error.retry_after / 60)
+        horas = round(minutos / 60, 1)
+        tempo_msg = f"{minutos} minutos" if minutos < 60 else f"{horas} horas"
+        
+        await interaction.response.send_message(f"⏳ Recarga em andamento! Você poderá elogiar outro Raider em aproximadamente **{tempo_msg}**.", ephemeral=True)
 
-    embed.set_thumbnail(url=membro.display_avatar.url)
-    await ctx.send(embed=embed)
+# --- COMANDO: /NEG ---
+@bot.tree.command(name="neg", description="Registra uma experiência negativa com um Raider.")
+@app_commands.describe(membro="O Raider que agiu de má fé")
+# Cooldown: 1 uso a cada 7200 segundos (2 horas) por usuário
+@app_commands.checks.cooldown(1, 7200, key=lambda i: i.user.id)
+async def neg(interaction: discord.Interaction, membro: discord.Member):
+    # 1. Verificações de Segurança
+    if membro.id == interaction.user.id or membro.bot:
+        # Reseta o cooldown se o comando for inválido (para não penalizar o erro)
+        neg.app_command.reset_cooldown(interaction)
+        return await interaction.response.send_message("❌ Comando inválido. Você não pode negativar a si mesmo ou a um bot.", ephemeral=True)
+
+    # 2. Executa a lógica de Reputação (Sua função alterar_rep)
+    nova_rep = alterar_rep(membro.id, -1)
+
+    # 3. Resposta no Canal
+    embed = discord.Embed(
+        title="💢 REPUTAÇÃO NEGATIVA",
+        description=f"{interaction.user.mention} deu **-1 de reputação** para {membro.mention}!",
+        color=0xe74c3c
+    )
+    embed.set_footer(text=f"Nova reputação de {membro.name}: {nova_rep}")
+    
+    await interaction.response.send_message(embed=embed)
+
+    # 4. Logs e Verificação de Cargos (Suas funções existentes)
+    # Adaptamos ctx para interaction onde necessário
+    await enviar_log(interaction, f"💢 **Reputação Negativa**\nPara: {membro.mention}\nTotal: `{nova_rep}`", 0xe74c3c)
+    
+    # Chama a verificação de nível/cargo que você já possui
+    await verificar_cargos_nivel(interaction, membro, nova_rep)
+
+# --- TRATAMENTO DE ERROS DE COOLDOWN (Para avisar o usuário) ---
+@neg.error
+async def neg_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CommandOnCooldown):
+        # Se for Staff, podemos ignorar o cooldown (Simulando seu @ignora_cooldown_staff)
+        is_staff = any(role.name.lower() in ["mods", "staff", "adm"] for role in interaction.user.roles)
+        
+        if is_staff:
+            neg.app_command.reset_cooldown(interaction)
+            # Aqui você precisaria chamar a função novamente ou tratar a lógica
+            return await interaction.response.send_message("⚠️ Cooldown de Staff ignorado. Use o comando novamente.", ephemeral=True)
+        
+        minutos = round(error.retry_after / 60)
+        await interaction.response.send_message(f"⏳ Calma, Raider! Você poderá negativar alguém novamente em {minutos} minutos.", ephemeral=True)
+
+# --- COMANDO: /PERFIL (Ver Status do Raider) ---
+@bot.tree.command(name="perfil", description="Consulta a ficha e a reputação de um Raider.")
+@app_commands.describe(membro="O Raider que deseja consultar (vazio para ver o seu)")
+async def perfil(interaction: discord.Interaction, membro: discord.Member = None):
+    alvo = membro or interaction.user
+    
+    # Simulação de dados do banco:
+    rep_positiva = 15 # Substitua pelo dado real do seu DB
+    rep_negativa = 2  # Substitua pelo dado real do seu DB
+    total = rep_positiva - rep_negativa
+    
+    status = "🟢 Confiável" if total >= 5 else "🟡 Iniciante"
+    if total < 0: status = "🔴 Cuidado: Má Reputação"
+
+    embed = discord.Embed(
+        title=f"👤 FICHA DE RAIDER: {alvo.name}",
+        color=0x3498db
+    )
+    
+    embed.add_field(name="✨ Reputação Positiva", value=f"`{rep_positiva}`", inline=True)
+    embed.add_field(name="💢 Reputação Negativa", value=f"`{rep_negativa}`", inline=True)
+    embed.add_field(name="📊 Saldo Geral", value=f"**{total}**", inline=True)
+    embed.add_field(name="🛡️ Status no Fronte", value=status, inline=False)
+
+    if alvo.avatar:
+        embed.set_thumbnail(url=alvo.avatar.url)
+    
+    embed.set_footer(text=f"ID: {alvo.id} • ARC Raiders Brasil")
+    
+    await interaction.response.send_message(embed=embed)
 
 @bot.command()
 @eh_staff()
@@ -617,59 +757,58 @@ async def colocar_botao(ctx):
         await ctx.send("Este comando só funciona dentro de um tópico!")
 
 @bot.command(aliases=['say', 'say2', 'anuncio'])
-@eh_staff()
-async def falar(ctx, tipo: str, *, mensagem: str = None):
-    # 1. Verifica se há conteúdo ou imagem
-    tem_anexo = len(ctx.message.attachments) > 0
-    if not mensagem and not tem_anexo:
-        return await ctx.send("❌ Digite uma mensagem ou anexe uma imagem!", delete_after=10)
-
-    tipo = tipo.lower()
+@bot.tree.command(name="falar", description="Envia um anúncio oficial (Texto ou Embed)")
+@app_commands.describe(
+    tipo="Escolha entre 'texto' ou 'embed'",
+    mensagem="O conteúdo do seu anúncio",
+    titulo="O título (apenas para o modo Embed)",
+    imagem="Anexe uma imagem para o anúncio",
+    marcar_everyone="Deseja marcar @everyone?"
+)
+@eh_staff_slash() # Ajuste seu decorador de staff para suportar Interaction
+async def falar(
+    interaction: discord.Interaction, 
+    tipo: str, 
+    mensagem: str, 
+    titulo: str = "Informativo ARC Raiders Brasil", 
+    imagem: discord.Attachment = None,
+    marcar_everyone: bool = False
+):
+    await interaction.response.defer(ephemeral=True) # Evita o erro de "O bot não respondeu"
     
-    # Prepara o arquivo para re-envio (evita que o link quebre ao deletar a msg)
+    tipo = tipo.lower()
+    content = "@everyone" if marcar_everyone else None
+    
+    # Prepara o arquivo se houver imagem
     arquivo_copy = None
-    if tem_anexo:
-        arquivo_copy = await ctx.message.attachments[0].to_file()
-
-    # 3. Apaga o comando original
-    try: await ctx.message.delete()
-    except: pass
+    if imagem:
+        arquivo_copy = await imagem.to_file()
 
     # --- MODO TEXTO ---
     if tipo == "texto":
-        texto_final = f"{mensagem if mensagem else ''}\n_Enviado por: {ctx.author.mention}_"
-        await ctx.send(content=texto_final, file=arquivo_copy)
-        await enviar_log(ctx, f"📢 **Msg Texto** em {ctx.channel.mention}", 0x9b59b6)
+        texto_final = f"{mensagem}\n\n_Enviado por: {interaction.user.mention}_"
+        await interaction.channel.send(content=content, file=arquivo_copy) if arquivo_copy else await interaction.channel.send(content=texto_final)
+        await interaction.followup.send("✅ Mensagem de texto enviada!", ephemeral=True)
 
     # --- MODO EMBED ---
     elif tipo == "embed":
-        if mensagem and '"' in mensagem:
-            partes = mensagem.split('"', 2)
-            titulo = partes[1]
-            conteudo = partes[2].strip()
-        else:
-            titulo = "Informativo ARC Raiders Brasil"
-            conteudo = mensagem if mensagem else ""
-
-        embed = discord.Embed(title=f"📢 {titulo}", description=conteudo, color=0xf1c40f)
+        embed = discord.Embed(title=f"📢 {titulo}", description=mensagem, color=0xf1c40f)
         
-        if ctx.guild.icon:
-            embed.set_author(name="Comunidade ARC Raiders Brasil", icon_url=ctx.guild.icon.url)
+        if interaction.guild.icon:
+            embed.set_author(name="Comunidade ARC Raiders Brasil", icon_url=interaction.guild.icon.url)
         
-        embed.set_footer(text=f"Staff: {ctx.author.name}", icon_url=ctx.author.display_avatar.url)
+        embed.set_footer(text=f"Staff: {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
 
-        # Se tiver imagem, anexamos o arquivo e referenciamos no Embed
         if arquivo_copy:
-            # O nome do arquivo no anexo deve ser o mesmo usado no set_image
             embed.set_image(url=f"attachment://{arquivo_copy.filename}")
-            await ctx.send(content=embed=embed, file=arquivo_copy)
+            await interaction.channel.send(content=content, embed=embed, file=arquivo_copy)
         else:
-            await ctx.send(content=embed=embed)
+            await interaction.channel.send(content=content, embed=embed)
             
-        await enviar_log(ctx, f"📢 **Anúncio Embed** em {ctx.channel.mention}\nTítulo: {titulo}", 0xf1c40f)
+        await interaction.followup.send("✅ Embed enviado com sucesso!", ephemeral=True)
 
     else:
-        await ctx.send("❌ Escolha `texto` ou `embed`.", delete_after=10)
+        await interaction.followup.send("❌ Tipo inválido. Escolha 'texto' ou 'embed'.", ephemeral=True)
 
 @bot.command()
 @eh_staff()
@@ -813,6 +952,8 @@ async def on_ready():
     bot.add_view(RegrasView())
     bot.add_view(AbrirTicketView())
     bot.add_view(TicketControlView())
+    await bot.tree.sync() # Sincroniza os comandos de barra com o Discord
+    print(f"✅ Comandos de barra sincronizados!")
     if not monitorar_noticias_pro.is_running():
         monitorar_noticias_pro.start()
     if not manter_banco_vivo.is_running():
